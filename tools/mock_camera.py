@@ -111,6 +111,26 @@ class MockCamera:
             },
             "/audio/channel/0/level": {"gain": -6.0, "normalised": 0.7},
             "/audio/channel/1/level": {"gain": -6.0, "normalised": 0.7},
+            # Reported as a bare list to exercise the other /supported* shape.
+            "/video/supportedISOs": [100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600],
+            "/video/supportedShutters": {
+                "shutters": [24, 25, 30, 50, 60, 100, 125, 250, 500, 1000],
+            },
+            "/camera/colorBars": {"enabled": False},
+            "/camera/tallyStatus": {"tally": "off"},
+            "/monitoring/display": {"displays": ["hdmi", "sdi"]},
+            "/monitoring/focusAssist": {"enabled": False, "mode": "Peak", "color": "Red"},
+            # Zebra carries a level, so a naive toggle that sends only the flag
+            # would drop it.
+            "/monitoring/hdmi/zebra": {"enabled": False, "level": 75},
+            "/monitoring/hdmi/falseColor": {"enabled": False},
+            "/monitoring/hdmi/cleanFeed": {"enabled": False},
+            "/monitoring/hdmi/focusAssist": {"enabled": False, "mode": "Peak"},
+            "/monitoring/hdmi/frameGuide": {"enabled": False, "ratio": 1.78},
+            "/monitoring/hdmi/safeArea": {"enabled": False},
+            "/monitoring/hdmi/frameGrids": {"enabled": False},
+            "/monitoring/hdmi/displayLUT": {"enabled": False},
+            "/monitoring/sdi/zebra": {"enabled": False, "level": 75},
             "/event/list": {"events": PUSHED},
         }
         self.listeners: set[asyncio.Queue[str]] = set()
@@ -138,9 +158,21 @@ camera = MockCamera()
 router = APIRouter(prefix="/control/api/v1")
 
 
+#: Supported, but nothing to report right now -- as the real camera answers for
+#: /media/active with no disk mounted.
+EMPTY: set[str] = set()
+
+#: Implemented by the API but not by this model, answered with 501 not 404.
+NOT_IMPLEMENTED: set[str] = set()
+
+
 @router.get("/{path:path}")
 async def read(path: str) -> Response:
     key = f"/{path}"
+    if key in NOT_IMPLEMENTED:
+        return Response(status_code=501)
+    if key in EMPTY:
+        return Response(status_code=204)
     if key not in camera.state:
         return JSONResponse({"error": "not supported"}, status_code=404)
     return JSONResponse(camera.state[key])

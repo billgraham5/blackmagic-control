@@ -103,3 +103,53 @@ async def test_a_404_is_taken_at_face_value():
     camera = CountingCamera()
     await _run(camera)
     assert camera.seen["/camera/tallyStatus"] == 1
+
+
+class QuirkyCamera:
+    """A camera answering the way real hardware does, not the way docs suggest.
+
+    Taken from a real Micro Studio 4K G2: /system answers 204 with no body,
+    /media/active answers 204 when no disk is mounted, /system/videoFormat
+    answers 501, and /event/list returns a bare array rather than an object.
+    """
+
+    def __init__(self, event_list) -> None:
+        self.event_list = event_list
+        self.app = FastAPI()
+        self.app.get("/control/api/v1/{path:path}")(self._read)
+
+    async def _read(self, path: str) -> Response:
+        key = f"/{path}"
+        if key == "/event/list":
+            return JSONResponse(self.event_list)
+        if key in ("/system", "/media/active"):
+            return Response(status_code=204)
+        if key in ("/system/videoFormat", "/system/codecFormat", "/video/ndFilter"):
+            return Response(status_code=501)
+        if key in ("/video/iso", "/transports/0/record"):
+            return JSONResponse({"iso": 400} if key == "/video/iso" else {"recording": False})
+        return JSONResponse({"error": "not supported"}, status_code=404)
+
+
+async def test_a_204_means_supported_with_nothing_to_report():
+    """No disk mounted is not the same as no media endpoint."""
+    camera = QuirkyCamera(event_list=[])
+    state, diagnostics = await _run(camera)
+    supported = set(state["supported"])
+    assert "/system" in supported
+    assert "/media/active" in supported
+    assert "/video/ndFilter" not in supported  # 501 is a real "no"
+    assert "UNEXPECTED" not in diagnostics
+
+
+async def test_event_list_as_a_bare_array_still_drives_subscriptions():
+    """Firmware returns either {"events": [...]} or a plain list."""
+    camera = QuirkyCamera(event_list=["/transports/0/record", "/system"])
+    state, _ = await _run(camera)
+    assert "/transports/0/record" in state["pushed"]
+
+
+async def test_event_list_as_an_object_still_drives_subscriptions():
+    camera = QuirkyCamera(event_list={"events": ["/transports/0/record"]})
+    state, _ = await _run(camera)
+    assert "/transports/0/record" in state["pushed"]

@@ -56,17 +56,82 @@ TRACKED: tuple[str, ...] = (
     "/audio/channel/1/level",
 )
 
-#: Endpoints the spec advertises but which need a capability check before use:
-#: the Micro Studio 4K G2's own OpenAPI documentation lists ND filter and XLR
-#: audio despite having neither.
+#: Endpoints that exist only on some bodies or some firmware. The Micro Studio
+#: 4K G2's own OpenAPI documentation lists an ND filter and XLR audio it does not
+#: have, while newer firmware adds monitoring and camera endpoints that the
+#: published spec dumps predate. Both directions are settled by probing.
 OPTIONAL: tuple[str, ...] = (
+    # exposure detail
     "/video/ndFilter",
+    "/video/ndFilter/displayMode",
+    "/video/ndFilterSelectable",
+    "/video/supportedNDFilters",
     "/video/supportedISOs",
-    "/video/supportedShutters",
     "/video/supportedGains",
-    "/camera/tallyStatus",
+    "/video/supportedShutters",
+    "/video/shutter/measurement",
+    "/video/flickerFreeShutters",
+    "/video/detailSharpening",
+    "/video/detailSharpeningLevel",
+    # lens capability description
+    "/lens/iris/description",
+    "/lens/focus/description",
+    "/lens/zoom/description",
+    "/lens/opticalImageStabilization",
+    # camera body
     "/camera/colorBars",
+    "/camera/tallyStatus",
+    "/camera/power",
+    "/camera/power/displayMode",
+    "/camera/programFeedDisplay",
+    "/camera/timingReferenceLock",
+    # monitoring, global
+    "/monitoring/display",
     "/monitoring/focusAssist",
+    "/monitoring/frameGuideRatio",
+    "/monitoring/frameGuideRatio/presets",
+    "/monitoring/frameGrids",
+    "/monitoring/safeAreaPercent",
+    # system and transport detail
+    "/system/product",
+    "/system/supportedFormats",
+    "/system/supportedCodecFormats",
+    "/system/supportedVideoFormats",
+    "/transports/0/clipIndex",
+    "/transports/0/timecode/source",
+    "/timelines/0",
+    "/clips",
+    # audio detail
+    "/audio/channels",
+    "/audio/supportedInputs",
+    "/audio/channel/0/input",
+    "/audio/channel/0/input/description",
+    "/audio/channel/0/supportedInputs",
+    "/audio/channel/0/available",
+    "/audio/channel/0/lowCutFilter",
+    "/audio/channel/0/padding",
+    "/audio/channel/0/phantomPower",
+    "/audio/channel/1/input",
+    "/audio/channel/1/available",
+    "/media/devices/doformatSupportedFilesystems",
+)
+
+#: Per-display monitoring overlays. The API addresses these by display name and
+#: does not document which names a given body uses, so they are discovered.
+MONITORING_PER_DISPLAY: tuple[str, ...] = (
+    "zebra",
+    "falseColor",
+    "focusAssist",
+    "frameGuide",
+    "frameGrids",
+    "safeArea",
+    "cleanFeed",
+    "displayLUT",
+)
+
+#: Display names to try when the camera does not enumerate them itself.
+DISPLAY_CANDIDATES: tuple[str, ...] = (
+    "hdmi", "sdi", "lcd", "viewfinder", "main", "front", "preview",
 )
 
 
@@ -92,6 +157,8 @@ class Camera:
         self._connected = False
         self._identity: dict[str, Any] = {}
         self._probe_results: dict[str, int | None] = {}
+        self._event_list: Any = None
+        self._displays: list[str] = []
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -163,9 +230,10 @@ class Camera:
             if status is None:
                 continue
             reachable = True
-            if status == 200 and value is not None:
+            if 200 <= status < 300:
                 self._supported.add(path)
-                self._state[path] = value
+                if value is not None:
+                    self._state[path] = value
 
         if not reachable:
             raise CameraUnavailable(
@@ -174,15 +242,24 @@ class Camera:
                 "Camera Setup under 'network access'."
             )
 
+        await self._discover_displays()
+
         self._connected = True
-        self._identity = self._state.get("/system") or {}
+        self._identity = self._state.get("/system") or self._state.get("/system/product") or {}
 
         # Which of the supported properties the camera will push to us. Older
         # firmware only pushes media/system/transport, so the rest must be polled.
-        events = await self.get("/event/list")
-        if isinstance(events, dict):
-            available = set(events.get("events") or [])
-            self._pushed = {p for p in self._supported if p in available}
+        self._event_list = await self.get("/event/list")
+        available = _event_names(self._event_list)
+        self._pushed = {p for p in self._supported if p in available}
+        if self._supported and not self._pushed:
+            log.warning(
+                "the camera lists %d subscribable properties, none matching the %d "
+                "endpoints in use; everything will be polled. /event/list returned: %r",
+                len(available),
+                len(self._supported),
+                self._event_list,
+            )
 
         log.info(
             "camera ready: %d endpoints supported, %d pushed over websocket, %d polled",
@@ -193,7 +270,7 @@ class Camera:
         unexpected = {
             path: status
             for path, status in self._probe_results.items()
-            if status not in (200, 404, 501)
+            if not (status is not None and (200 <= status < 300 or status in (404, 501)))
         }
         if unexpected:
             # Neither "here it is" nor "not supported" -- worth surfacing, since
@@ -203,6 +280,53 @@ class Camera:
                 len(unexpected),
                 ", ".join(f"{p} -> {s or 'no response'}" for p, s in sorted(unexpected.items())),
             )
+
+    async def _discover_displays(self) -> None:
+        """Find the monitoring outputs this body exposes.
+
+        Overlays like zebra and false colour are addressed per display, and the
+        API does not document which names a given camera uses. Ask the camera
+        first; fall back to trying the usual names with one cheap endpoint each,
+        then probe the full set only for displays that answered.
+        """
+        listed = self._state.get("/monitoring/display")
+        names: list[str] = []
+        if isinstance(listed, dict):
+            for key in ("displays", "display", "names"):
+                value = listed.get(key)
+                if isinstance(value, list):
+                    names = [str(item) for item in value]
+                    break
+            if not names and isinstance(listed.get("display"), str):
+                names = [listed["display"]]
+        elif isinstance(listed, list):
+            names = [str(item) for item in listed]
+
+        candidates = names or list(DISPLAY_CANDIDATES)
+        for name in candidates:
+            status, value = await self._probe_one(f"/monitoring/{name}/zebra", attempts=1)
+            self._probe_results[f"/monitoring/{name}/zebra"] = status
+            if status is None or not (200 <= status < 300):
+                continue
+            self._displays.append(name)
+            self._supported.add(f"/monitoring/{name}/zebra")
+            if value is not None:
+                self._state[f"/monitoring/{name}/zebra"] = value
+
+        for name in self._displays:
+            for overlay in MONITORING_PER_DISPLAY:
+                if overlay == "zebra":
+                    continue
+                path = f"/monitoring/{name}/{overlay}"
+                status, value = await self._probe_one(path)
+                self._probe_results[path] = status
+                if status is not None and 200 <= status < 300:
+                    self._supported.add(path)
+                    if value is not None:
+                        self._state[path] = value
+
+        if self._displays:
+            log.info("monitoring displays: %s", ", ".join(self._displays))
 
     async def _probe_one(self, path: str, attempts: int = 3) -> tuple[int | None, Any]:
         """Read one endpoint, returning (status, value).
@@ -226,12 +350,24 @@ class Camera:
                 log.debug("probe %s attempt %d failed: %s", path, attempt + 1, exc)
                 status = None
                 continue
-            if response.status_code == 200:
-                return 200, _decode(response)
             status = response.status_code
+            if 200 <= status < 300:
+                # 204 is a real answer: the endpoint exists, it just has nothing
+                # to report right now (no disk mounted, no value set).
+                return status, _decode(response)
             if status < 500:
                 return status, None
         return status, None
+
+    @property
+    def event_list(self) -> Any:
+        """Whatever ``/event/list`` returned, verbatim, for diagnostics."""
+        return self._event_list
+
+    @property
+    def displays(self) -> list[str]:
+        """Monitoring outputs this camera exposes, discovered at startup."""
+        return list(self._displays)
 
     @property
     def probe_results(self) -> dict[str, int | None]:
@@ -396,6 +532,19 @@ class Camera:
                     continue
                 if value is not None:
                     self._update(path, value)
+
+
+def _event_names(payload: Any) -> set[str]:
+    """Pull the subscribable property list out of whichever shape firmware used."""
+    if isinstance(payload, dict):
+        for key in ("events", "properties", "deviceProperties"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return {str(item) for item in value}
+        return set()
+    if isinstance(payload, list):
+        return {str(item) for item in payload}
+    return set()
 
 
 def _decode(response: httpx.Response) -> Any:

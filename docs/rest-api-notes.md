@@ -296,6 +296,9 @@ Subscribe:
 
 Actions: `subscribe` · `unsubscribe` · `listSubscriptions` · `listProperties`.
 
+`GET /event/list` returns the subscribable set, as either `{"events": [...]}` or a bare
+array depending on firmware — handle both.
+
 Pushes arrive as:
 ```json
 {"type": "event",
@@ -319,18 +322,44 @@ what keeps a Stream Deck honest.
 
 ---
 
+## Monitoring and camera body — present on current firmware
+
+The 2024-era spec dump this document was first built from had none of these, and an
+earlier revision wrongly recorded them as absent from this body. Confirmed working on a
+Micro Studio 4K G2 on current firmware:
+
+```
+GET|PUT  /camera/colorBars
+GET      /camera/tallyStatus
+GET|PUT  /monitoring/focusAssist
+GET|PUT  /monitoring/frameGuideRatio
+GET|PUT  /monitoring/frameGrids
+GET|PUT  /monitoring/safeAreaPercent
+GET|PUT  /monitoring/{display}/zebra          also falseColor, focusAssist,
+GET|PUT  /monitoring/{display}/cleanFeed      frameGuide, frameGrids, safeArea,
+GET|PUT  /monitoring/{display}/displayLUT     and displayLUT
+```
+
+Per-display overlays are addressed by display name, and the API does not document which
+names a body uses. `GET /monitoring/display` may enumerate them; otherwise probe the
+usual candidates (`hdmi`, `sdi`, `lcd`, `viewfinder`, `main`, `front`, `preview`).
+
+Overlay bodies carry more than the on/off flag — zebra has a `level`, focus assist a
+`mode` and `color`, frame guide a `ratio` — so read before writing and merge, or you will
+silently reset them.
+
+Also confirmed on current firmware, and absent from the older dump:
+`/video/supportedISOs` · `/video/supportedGains` · `/video/supportedShutters` ·
+`/transports/0/play` · `/transports/0/stop` · `/system/format`
+
 ## Not on this body
 
-Documented in the manual, belongs to URSA Cine / Studio Camera / PYXIS bodies. Expect
-`404` or `501`:
+Expect `404` or `501`:
 
 `/livestreams/*` · `/cloud/*` · `/slates/*` · `/immersive/*` · `/clips` ·
-most of `/monitoring/*` (focus assist, zebra, false colour, frame guides, LUTs, safe area) ·
-most of `/camera/*` (`colorBars`, `tallyStatus`, `power`, `programFeedDisplay`,
-`timingReferenceLock`)
-
-The monitoring and tally gaps are the notable ones — no false colour or zebra toggling,
-and no tally read-back over REST on this camera.
+`/video/ndFilter` (no ND filter hardware) ·
+`/system/codecFormat` and `/system/videoFormat` — `501` on this camera; use
+`/system/format` instead
 
 ---
 

@@ -14,13 +14,16 @@ async def deck(client, path: str):
 # ----------------------------------------------------------------- discovery
 
 async def test_probe_drops_endpoints_this_body_lacks(service):
-    """The published spec advertises hardware the Micro Studio G2 does not have."""
+    """The published spec advertises hardware the Micro Studio G2 does not have.
+
+    ND filter is the clear case: the endpoint is in the camera's own OpenAPI
+    documentation, and the body has no ND filter behind it.
+    """
     supported = set((await service.get("/api/state")).json()["supported"])
     assert "/video/iso" in supported
     assert "/lens/iris" in supported
     assert "/video/ndFilter" not in supported
-    assert "/camera/tallyStatus" not in supported
-    assert "/monitoring/focusAssist" not in supported
+    assert "/clips" not in supported
 
 
 async def test_pushed_and_polled_properties_are_separated(service):
@@ -210,3 +213,46 @@ async def test_service_starts_without_a_camera_and_reports_why():
             assert body["connected"] is False
             response = await client.get("/deck/status")
             assert response.status_code == 503
+
+
+# ------------------------------------------------------- monitoring overlays
+
+async def test_monitoring_displays_are_discovered(service):
+    body = (await service.get("/api/state")).json()
+    assert body["displays"] == ["hdmi", "sdi"]
+    assert "/monitoring/hdmi/falseColor" in body["supported"]
+    # sdi only implements zebra, so the rest must not be claimed for it.
+    assert "/monitoring/sdi/falseColor" not in body["supported"]
+
+
+async def test_overlay_toggles_without_dropping_its_other_settings(service, camera_state):
+    """Zebra carries a level; a toggle that sent only the flag would lose it."""
+    assert (await deck(service, "monitor/zebra/toggle")).text == "zebra on"
+    assert camera_state.state["/monitoring/hdmi/zebra"] == {"enabled": True, "level": 75}
+    assert (await deck(service, "monitor/zebra/toggle")).text == "zebra off"
+
+
+async def test_overlay_can_be_set_explicitly_and_per_display(service, camera_state):
+    assert (await deck(service, "monitor/falseColor/on")).text == "falseColor on"
+    assert (await deck(service, "monitor/zebra/on?display=sdi")).text == "zebra on"
+    assert camera_state.state["/monitoring/sdi/zebra"]["enabled"] is True
+    assert camera_state.state["/monitoring/hdmi/zebra"]["enabled"] is False
+
+
+async def test_unknown_overlay_says_so(service):
+    response = await deck(service, "monitor/nonsense/toggle")
+    assert response.status_code == 400
+    assert "not available" in response.text
+
+
+async def test_colour_bars_and_tally(service):
+    assert (await deck(service, "colorbars/toggle")).text == "colorBars on"
+    assert (await deck(service, "tally")).text == "off"
+
+
+async def test_the_cameras_own_iso_list_drives_stepping(service):
+    """/video/supportedISOs is reported as a bare list here, not an object."""
+    body = (await service.get("/api/state")).json()
+    assert "/video/supportedISOs" in body["supported"]
+    await deck(service, "iso/400")
+    assert (await deck(service, "iso/up")).text == "ISO 800"

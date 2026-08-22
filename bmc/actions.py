@@ -18,16 +18,32 @@ from . import ladders
 
 # ------------------------------------------------------------------ helpers
 
+def _reported_numbers(camera: Camera, path: str) -> list[int]:
+    """Pull a list of numbers out of a ``/supported*`` endpoint.
+
+    Firmware returns these as either a bare array or an object wrapping one
+    under a name we cannot predict, so accept any list of numbers we find.
+    """
+    payload = camera.value(path)
+    candidates: list[Any] = []
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, dict):
+        for value in payload.values():
+            if isinstance(value, list):
+                candidates = value
+                break
+    numeric = [int(v) for v in candidates if isinstance(v, (int, float))]
+    return sorted(set(numeric))
+
+
 def _iso_ladder(camera: Camera) -> Sequence[int]:
     """Prefer the camera's own list of legal ISOs over our built-in ladder."""
-    reported = camera.value("/video/supportedISOs")
-    if isinstance(reported, dict):
-        values = reported.get("supportedISOs") or reported.get("isos")
-        if isinstance(values, list) and values:
-            numeric = [int(v) for v in values if isinstance(v, (int, float))]
-            if numeric:
-                return sorted(numeric)
-    return ladders.ISO_LADDER
+    return _reported_numbers(camera, "/video/supportedISOs") or ladders.ISO_LADDER
+
+
+def _shutter_ladder(camera: Camera) -> Sequence[int]:
+    return _reported_numbers(camera, "/video/supportedShutters") or ladders.SHUTTER_SPEEDS
 
 
 def _require(camera: Camera, path: str) -> None:
@@ -130,7 +146,7 @@ async def shutter_step(camera: Camera, delta: int) -> str:
         )
     current = int(value.get("shutterSpeed") or 50)
     return await shutter_set_speed(
-        camera, ladders.step(current, ladders.SHUTTER_SPEEDS, delta)
+        camera, ladders.step(current, _shutter_ladder(camera), delta)
     )
 
 
@@ -293,6 +309,64 @@ async def color_set(camera: Camera, wheel: str, **channels: float) -> str:
     _require(camera, path)
     await camera.put(path, {k: float(v) for k, v in channels.items()})
     return wheel
+
+
+# --------------------------------------------------- monitoring and overlays
+
+def flag_state(camera: Camera, path: str, key: str = "enabled") -> bool:
+    value = camera.value(path)
+    return bool(value.get(key)) if isinstance(value, dict) else False
+
+
+async def flag_set(camera: Camera, path: str, on: bool, key: str = "enabled") -> str:
+    """Set one boolean overlay, preserving whatever else it carries.
+
+    Zebra has a level, focus assist has a mode and colour, frame guide has a
+    ratio. Sending only the flag would drop them, so merge into current state.
+    """
+    _require(camera, path)
+    current = camera.value(path)
+    body = dict(current) if isinstance(current, dict) else {}
+    body[key] = on
+    await camera.put(path, body)
+    label = path.rsplit("/", 1)[-1]
+    return f"{label} {'on' if flag_state(camera, path, key) else 'off'}"
+
+
+async def flag_toggle(camera: Camera, path: str, key: str = "enabled") -> str:
+    return await flag_set(camera, path, not flag_state(camera, path, key), key)
+
+
+def monitoring_path(camera: Camera, overlay: str, display: str | None = None) -> str:
+    """Resolve an overlay to a path, defaulting to the first display found.
+
+    Overlays are addressed per display and the names vary by body, so the
+    caller should not have to know them.
+    """
+    if display:
+        return f"/monitoring/{display}/{overlay}"
+    for name in camera.displays:
+        candidate = f"/monitoring/{name}/{overlay}"
+        if camera.supports(candidate):
+            return candidate
+    # Focus assist also exists as a global setting on some firmware.
+    if camera.supports(f"/monitoring/{overlay}"):
+        return f"/monitoring/{overlay}"
+    raise CameraError(f"{overlay} is not available on this camera")
+
+
+def tally_summary(camera: Camera) -> str:
+    value = camera.value("/camera/tallyStatus")
+    if not isinstance(value, dict):
+        return "--"
+    for key in ("tally", "status", "state"):
+        if key in value:
+            return str(value[key])
+    if value.get("program"):
+        return "PROGRAM"
+    if value.get("preview"):
+        return "PREVIEW"
+    return "off"
 
 
 # ------------------------------------------------------------------- status

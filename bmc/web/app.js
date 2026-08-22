@@ -7,11 +7,36 @@
 
 const ISO_CHIPS = [200, 400, 800, 1600, 3200, 6400];
 
+/* How each slider renders its own value, so the number under your finger
+ * updates as you drag instead of waiting for the camera to answer. */
+/* Overlay endpoint names are camelCase; these are what a person calls them. */
+const OVERLAY_NAMES = {
+  zebra: "Zebra",
+  falseColor: "False colour",
+  focusAssist: "Focus assist",
+  frameGuide: "Frame guide",
+  frameGrids: "Grids",
+  safeArea: "Safe area",
+  cleanFeed: "Clean feed",
+  displayLUT: "LUT",
+  colorBars: "Colour bars",
+};
+
+const SLIDERS = {
+  wb: { label: "wb-value", format: (v) => `${Math.round(v)}K` },
+  tint: { label: "tint-value", format: (v) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`) },
+  iris: { label: "iris-value", format: (v) => `${Math.round(v * 100)}%` },
+  focus: { label: "focus-value", format: (v) => `${Math.round(v * 100)}%` },
+  zoom: { label: "zoom-value", format: (v) => `${Math.round(v * 100)}%` },
+  saturation: { label: "saturation-value", format: (v) => Number(v).toFixed(2) },
+};
+
 const el = (id) => document.getElementById(id);
 const state = {
   supported: new Set(),
   values: {},
   presets: [],
+  overlays: [],
   wbPresets: {},
   /** Sliders the user is currently dragging, so pushes do not fight them. */
   dragging: new Set(),
@@ -119,18 +144,18 @@ function renderExposure() {
   show("row-shutter", supports("/video/shutter"));
 
   const wb = value("/video/whiteBalance", "whiteBalance");
-  if (wb !== null) {
+  if (wb !== null && !state.dragging.has("wb")) {
     el("wb-value").textContent = `${wb}K`;
-    if (!state.dragging.has("wb")) el("wb-slider").value = wb;
+    el("wb-slider").value = wb;
   }
   markActive("[data-wb]", "wb", wb);
   show("row-wb-presets", supports("/video/whiteBalance"));
   show("row-wb", supports("/video/whiteBalance"));
 
   const tint = value("/video/whiteBalanceTint", "whiteBalanceTint");
-  if (tint !== null) {
+  if (tint !== null && !state.dragging.has("tint")) {
     el("tint-value").textContent = tint > 0 ? `+${tint}` : `${tint}`;
-    if (!state.dragging.has("tint")) el("tint-slider").value = tint;
+    el("tint-slider").value = tint;
   }
   show("row-tint", supports("/video/whiteBalanceTint"));
 
@@ -146,31 +171,31 @@ function renderExposure() {
 
 function renderLens() {
   const iris = state.values["/lens/iris"] || {};
-  if (iris.apertureStop) {
-    el("iris-value").textContent = `f/${iris.apertureStop}`;
-  } else if (iris.normalised !== undefined) {
-    el("iris-value").textContent = `${Math.round(iris.normalised * 100)}%`;
-  }
-  if (iris.normalised !== undefined && !state.dragging.has("iris")) {
-    el("iris-slider").value = iris.normalised;
+  if (!state.dragging.has("iris")) {
+    if (iris.apertureStop) {
+      el("iris-value").textContent = `f/${iris.apertureStop}`;
+    } else if (iris.normalised !== undefined) {
+      el("iris-value").textContent = `${Math.round(iris.normalised * 100)}%`;
+    }
+    if (iris.normalised !== undefined) el("iris-slider").value = iris.normalised;
   }
   show("row-iris", supports("/lens/iris"));
 
   const focus = value("/lens/focus", "focus");
-  if (focus !== null) {
+  if (focus !== null && !state.dragging.has("focus")) {
     el("focus-value").textContent = `${Math.round(focus * 100)}%`;
-    if (!state.dragging.has("focus")) el("focus-slider").value = focus;
+    el("focus-slider").value = focus;
   }
   show("row-focus", supports("/lens/focus"));
 
   const zoom = state.values["/lens/zoom"] || {};
-  if (zoom.focalLength) {
-    el("zoom-value").textContent = `${zoom.focalLength}mm`;
-  } else if (zoom.normalised !== undefined) {
-    el("zoom-value").textContent = `${Math.round(zoom.normalised * 100)}%`;
-  }
-  if (zoom.normalised !== undefined && !state.dragging.has("zoom")) {
-    el("zoom-slider").value = zoom.normalised;
+  if (!state.dragging.has("zoom")) {
+    if (zoom.focalLength) {
+      el("zoom-value").textContent = `${zoom.focalLength}mm`;
+    } else if (zoom.normalised !== undefined) {
+      el("zoom-value").textContent = `${Math.round(zoom.normalised * 100)}%`;
+    }
+    if (zoom.normalised !== undefined) el("zoom-slider").value = zoom.normalised;
   }
   show("row-zoom", supports("/lens/zoom"));
 
@@ -179,11 +204,62 @@ function renderLens() {
 
 function renderColor() {
   const saturation = value("/colorCorrection/color", "saturation");
-  if (saturation !== null) {
+  if (saturation !== null && !state.dragging.has("saturation")) {
     el("saturation-value").textContent = Number(saturation).toFixed(2);
-    if (!state.dragging.has("saturation")) el("saturation-slider").value = saturation;
+    el("saturation-slider").value = saturation;
   }
   show("card-color", supports("/colorCorrection/color"));
+}
+
+/* Overlays live under /monitoring/<display>/<name>, and which display and which
+ * overlays exist varies by body and firmware, so the buttons are built from
+ * whatever the probe found rather than hardcoded. */
+function overlayButtons() {
+  const seen = new Map();
+  state.overlays.forEach((path) => {
+    if (path === "/camera/colorBars") {
+      seen.set("colorBars", { path, url: "/deck/colorbars/toggle" });
+      return;
+    }
+    const name = path.split("/").pop();
+    if (!OVERLAY_NAMES[name] || seen.has(name)) return;
+    seen.set(name, { path, url: `/deck/monitor/${name}/toggle` });
+  });
+  // Fixed order, so buttons do not shuffle between renders or cameras.
+  const order = Object.keys(OVERLAY_NAMES);
+  return new Map([...seen].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])));
+}
+
+function renderMonitoring() {
+  const buttons = overlayButtons();
+  const container = el("monitor-toggles");
+
+  if (container.dataset.built !== String(buttons.size)) {
+    container.textContent = "";
+    buttons.forEach((entry, name) => {
+      const button = document.createElement("button");
+      button.textContent = OVERLAY_NAMES[name];
+      button.dataset.overlay = name;
+      button.addEventListener("click", () => send(entry.url));
+      container.append(button);
+    });
+    container.dataset.built = String(buttons.size);
+  }
+
+  buttons.forEach((entry, name) => {
+    const button = container.querySelector(`[data-overlay="${name}"]`);
+    if (button) button.classList.toggle("on", Boolean(value(entry.path, "enabled", false)));
+  });
+
+  const tally = state.values["/camera/tallyStatus"];
+  const hasTally = supports("/camera/tallyStatus") && tally;
+  show("row-tally", Boolean(hasTally));
+  if (hasTally) {
+    el("tally-value").textContent =
+      tally.tally ?? tally.status ?? (tally.program ? "PROGRAM" : tally.preview ? "PREVIEW" : "off");
+  }
+
+  show("card-monitoring", buttons.size > 0 || Boolean(hasTally));
 }
 
 function renderPresets() {
@@ -236,6 +312,7 @@ function renderAll() {
   renderExposure();
   renderLens();
   renderColor();
+  renderMonitoring();
   renderPresets();
   renderMedia();
   renderStatusLine();
@@ -278,22 +355,36 @@ function wireControls() {
 
   document.querySelectorAll("input[type=range][data-control]").forEach((slider) => {
     const control = slider.dataset.control;
+    const spec = SLIDERS[control];
     const push = throttle((v) => send(`/api/set/${control}?v=${v}`));
 
-    const startDrag = () => state.dragging.add(control);
-    const endDrag = () => {
-      state.dragging.delete(control);
-      send(`/api/set/${control}?v=${slider.value}`);
+    /* Show the value under your finger straight away. Waiting for the camera
+     * to answer means a poll interval of not knowing what you are setting --
+     * and on firmware that pushes nothing, that is every value on the page. */
+    const showLive = () => {
+      if (spec) el(spec.label).textContent = spec.format(Number(slider.value));
     };
 
-    slider.addEventListener("pointerdown", startDrag);
-    slider.addEventListener("pointerup", endDrag);
-    slider.addEventListener("pointercancel", endDrag);
     slider.addEventListener("input", () => {
       state.dragging.add(control);
+      showLive();
       push(slider.value);
     });
-    slider.addEventListener("change", endDrag);
+
+    /* Stay "dragging" until the final write lands, so a poll that is already
+     * in flight cannot snap the label back to the old value. */
+    const commit = async () => {
+      if (!state.dragging.has(control)) return;
+      showLive();
+      await send(`/api/set/${control}?v=${slider.value}`);
+      state.dragging.delete(control);
+      renderAll();
+    };
+
+    slider.addEventListener("change", commit);
+    slider.addEventListener("pointerup", commit);
+    slider.addEventListener("pointercancel", commit);
+    slider.addEventListener("blur", commit);
   });
 }
 
@@ -306,6 +397,7 @@ async function loadState() {
   state.supported = new Set(data.supported || []);
   state.values = data.state || {};
   state.presets = data.presets || [];
+  state.overlays = data.overlays || [];
   state.wbPresets = data.wbPresets || {};
 
   el("dot").className = `dot ${data.connected ? "on" : "off"}`;

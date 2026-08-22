@@ -296,6 +296,41 @@ def _deck_router(supervisor: Supervisor) -> APIRouter:
         camera = supervisor.require()
         return await _text(lambda: actions.preset_save(camera, name))
 
+    # ---- monitoring overlays and camera body
+    @router.get("/tally", response_class=PlainTextResponse)
+    async def tally() -> str:
+        return actions.tally_summary(supervisor.require())
+
+    @router.get("/colorbars/toggle", response_class=PlainTextResponse)
+    async def colorbars():
+        camera = supervisor.require()
+        return await _text(lambda: actions.flag_toggle(camera, "/camera/colorBars"))
+
+    @router.get("/monitor/{overlay}/toggle", response_class=PlainTextResponse)
+    async def monitor_toggle(overlay: str, display: str | None = None):
+        """Toggle zebra, falseColor, focusAssist, frameGuide, cleanFeed and friends."""
+        camera = supervisor.require()
+
+        async def run() -> str:
+            return await actions.flag_toggle(
+                camera, actions.monitoring_path(camera, overlay, display)
+            )
+
+        return await _text(run)
+
+    @router.get("/monitor/{overlay}/{state}", response_class=PlainTextResponse)
+    async def monitor_set(overlay: str, state: str, display: str | None = None):
+        if state not in ("on", "off"):
+            raise HTTPException(status_code=404, detail="state must be 'on' or 'off'")
+        camera = supervisor.require()
+
+        async def run() -> str:
+            return await actions.flag_set(
+                camera, actions.monitoring_path(camera, overlay, display), state == "on"
+            )
+
+        return await _text(run)
+
     @router.get("/saturation/{value}", response_class=PlainTextResponse)
     async def saturation(value: float):
         camera = supervisor.require()
@@ -323,6 +358,11 @@ def _api_router(supervisor: Supervisor) -> APIRouter:
             },
             "supported": sorted(camera.supported),
             "pushed": sorted(camera.pushed),
+            "displays": camera.displays,
+            "overlays": sorted(
+                path for path in camera.supported
+                if path.startswith("/monitoring/") or path == "/camera/colorBars"
+            ),
             "presets": actions.preset_names(camera),
             "activePreset": actions.preset_active(camera),
             "wbPresets": dict(sorted(ladders.WB_PRESETS.items())),
@@ -353,8 +393,8 @@ def _api_router(supervisor: Supervisor) -> APIRouter:
             "",
         ]
         for path, status in sorted(results.items()):
-            if status == 200:
-                note = "ok"
+            if status is not None and 200 <= status < 300:
+                note = "ok" if status != 204 else "ok (supported, nothing to report)"
             elif status in (404, 501):
                 note = "not supported by this camera"
             elif status is None:
@@ -363,10 +403,30 @@ def _api_router(supervisor: Supervisor) -> APIRouter:
                 note = "UNEXPECTED - control lost for the wrong reason"
             lines.append(f"{str(status or '---'):>4}  {path:<44} {note}")
 
-        events = camera.value("/event/list")
-        if isinstance(events, dict):
-            lines += ["", "websocket-subscribable properties reported by the camera:"]
-            lines += [f"      {name}" for name in sorted(events.get("events") or [])] or ["      (none)"]
+        if camera.displays:
+            lines += ["", f"monitoring displays: {', '.join(camera.displays)}"]
+
+        from .camera import _event_names
+
+        names = sorted(_event_names(camera.event_list))
+        lines += ["", f"/event/list returned: {camera.event_list!r}"]
+        if names:
+            lines += [
+                "",
+                f"{len(names)} websocket-subscribable properties reported "
+                f"({len(camera.pushed)} of them in use):",
+            ]
+            lines += [
+                f"      {'push' if name in camera.pushed else '    '}  {name}"
+                for name in names
+            ]
+        else:
+            lines += [
+                "",
+                "The camera reported no subscribable properties, so every value is",
+                "polled. Button state still works, just on the poll interval rather",
+                "than instantly.",
+            ]
         return "\n".join(lines)
 
     @router.get("/set/{control}", response_class=PlainTextResponse)

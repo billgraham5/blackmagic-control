@@ -73,6 +73,27 @@ Active MFT lenses only.
 | `/deck/iris/open` · `/deck/iris/close` | ±5%, or `?by=2` |
 | `/deck/focus/auto` | One-shot autofocus |
 
+### Monitoring overlays
+
+Available on current firmware. Overlays apply to the first display the service found;
+add `?display=sdi` to target another.
+
+| URL | Notes |
+| --- | --- |
+| `/deck/monitor/zebra/toggle` | Also `on` / `off` instead of `toggle` |
+| `/deck/monitor/falseColor/toggle` | |
+| `/deck/monitor/focusAssist/toggle` | |
+| `/deck/monitor/frameGuide/toggle` | |
+| `/deck/monitor/frameGrids/toggle` | |
+| `/deck/monitor/safeArea/toggle` | |
+| `/deck/monitor/cleanFeed/toggle` | |
+| `/deck/monitor/displayLUT/toggle` | |
+| `/deck/colorbars/toggle` | |
+| `/deck/tally` | Reads tally state |
+
+Toggling preserves the overlay's other settings — zebra keeps its level, focus assist its
+mode and colour, frame guide its ratio.
+
 ### Exposure mode, presets, colour
 
 | URL | Notes |
@@ -98,6 +119,9 @@ Active MFT lenses only.
 | Shutter 1/50 | `/deck/shutter/50` |
 | AE toggle | `/deck/ae/toggle` |
 | Disk remaining | `/deck/media` |
+| False colour | `/deck/monitor/falseColor/toggle` |
+| Zebra | `/deck/monitor/zebra/toggle` |
+| Clean feed | `/deck/monitor/cleanFeed/toggle` |
 
 Spaces in preset names need URL encoding (`Studio%20A`); most plugins will do this
 for you if you paste the name with a space.
