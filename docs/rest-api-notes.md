@@ -1,163 +1,351 @@
-# Camera Control REST API — working notes
+# What you can control on a Micro Studio Camera 4K G2
 
-Derived from *REST API for Blackmagic Cameras* (August 2025 revision) cross-referenced
-against an OpenAPI dump taken from a real Micro Studio Camera 4K G2.
+Derived from the OpenAPI specification served by an actual Micro Studio Camera 4K G2 at
+`/control/documentation.html`, cross-checked against *REST API for Blackmagic Cameras*
+(August 2025) and the camera's published hardware specs.
+
+> **Two caveats that matter throughout.**
+>
+> 1. **The spec is generated from shared firmware code, so it advertises hardware this
+>    body does not have.** ND filter endpoints and XLR audio inputs both appear in the
+>    G2's own documentation; the camera has neither. Presence in the spec is not proof of
+>    a working feature.
+> 2. **Endpoint coverage grows with firmware.** The dump below came from a 2024-era
+>    firmware. Newer releases add endpoints. Run `scripts/probe-camera.sh` for ground truth
+>    on your unit.
 
 ## Connecting
 
 | Item | Value |
 | --- | --- |
 | Base URL | `http://<camera>.local/control/api/v1/` |
-| Secure base URL | `https://<camera>.local/control/api/v1/` — requires *Generate Certificate* in Blackmagic Camera Setup; the cert is self-signed |
+| Secure base URL | `https://<camera>.local/control/api/v1/` — needs *Generate Certificate* in Blackmagic Camera Setup; self-signed |
 | OpenAPI docs | `http://<camera>.local/control/documentation.html` |
-| Websocket | `ws://<camera>.local/control/api/v1/event/websocket` (`wss://` when secure) |
+| Websocket | `ws://<camera>.local/control/api/v1/event/websocket` |
 | Web media manager | `http://<camera>.local/` |
-| Auth | None declared in the OpenAPI spec — access control is network-level |
+| Auth | None declared — access control is network-level |
 | CORS | Permissive; browser pages on other origins can call the API directly |
 
-**The web media manager must be enabled** in Blackmagic Camera Setup under *network
-access*. The REST API is served by that same service.
+**The web media manager must be enabled** under *network access* in Blackmagic Camera
+Setup — the REST API is served by that same service. Renaming the camera changes its
+mDNS hostname.
 
-Changing the camera name in Blackmagic Camera Setup changes the mDNS hostname.
+Mixed content rule: an HTTPS page cannot call `http://` on the camera. Serve your page
+over plain HTTP, or generate the camera certificate and trust it once in the browser.
 
-Note the mixed-content rule: an HTTPS-hosted page cannot call `http://` on the camera.
-Either serve your page over plain HTTP, or generate the camera certificate and trust it
-once in the browser.
+Conventions: `GET` returns a JSON object with the property wrapped by name
+(`{"iso": 400}`). `PUT` takes the same shape and returns `200`/`204`; `400` on a rejected
+value; `501` where the device does not implement it.
 
-## Response conventions
+---
 
-- `GET` returns JSON; scalar properties come back wrapped, e.g. `{"iso": 400}`
-- `PUT` returns `204 No Content` on success, `400` on a rejected value
-- Endpoints ending in `/supported*` or `/description` enumerate the legal values and
-  ranges for the sibling endpoint — query these rather than hardcoding
+## Exposure — the core of what you want
 
-## Confirmed on Micro Studio Camera 4K G2
-
-Taken from that body's own `/control/documentation.html`. Firmware adds endpoints over
-time, so treat this as a floor, not a ceiling.
-
-### Video / exposure
+### ISO — `GET|PUT /video/iso`
+```json
+{"iso": 400}
 ```
-GET|PUT  /video/iso
-GET|PUT  /video/gain
-GET|PUT  /video/shutter
-GET|PUT  /video/whiteBalance
-     PUT /video/whiteBalance/doAuto
-GET|PUT  /video/whiteBalanceTint
-GET|PUT  /video/ndFilter
-GET|PUT  /video/ndFilter/displayMode
-GET|PUT  /video/autoExposure
+Spec declares a 32-bit range, but the hardware ladder is **100–25,600**, dual native
+**400** and **3200**. Off-ladder values are rejected. This is the single most useful
+Stream Deck control on the camera.
+
+### Gain — `GET|PUT /video/gain`
+```json
+{"gain": 0}
+```
+Integer dB. Hardware range is **−12 dB (ISO 100) to +36 dB (ISO 25,600)**. Same physical
+control as ISO, expressed differently — pick one and stay consistent.
+
+### Shutter — `GET|PUT /video/shutter`
+```json
+{"shutterSpeed": 50}
+{"shutterAngle": 18000}
+```
+Returns whichever the camera's *shutter measurement* setting is configured for, plus
+`continuousShutterAutoExposure` telling you if auto exposure owns it.
+
+- `shutterSpeed` — denominator of a fraction of a second, max 50000. `50` = 1/50.
+  Floor is the sensor frame rate.
+- `shutterAngle` — hundredths of a degree, 100–36000. `18000` = 180°.
+
+On `PUT`, send **one**. If both, `shutterSpeed` wins.
+
+### White balance — `GET|PUT /video/whiteBalance`
+```json
+{"whiteBalance": 5600}
+```
+Kelvin, **2500–10000**. Ideal for preset Stream Deck keys (3200 tungsten, 4500 fluoro,
+5600 daylight, 7500 shade).
+
+### Tint — `GET|PUT /video/whiteBalanceTint`
+```json
+{"whiteBalanceTint": 0}
+```
+**−50 to +50.**
+
+### Auto white balance — `PUT /video/whiteBalance/doAuto`
+No body. One-shot AWB off the current frame. Excellent single-button action.
+
+### Auto exposure — `GET|PUT /video/autoExposure`
+```json
+{"mode": {"mode": "Continuous", "type": "Shutter"}}
+```
+- `mode`: `Off` · `Continuous` · `OneShot`
+- `type`: `""` · `Iris` · `Shutter` · `Iris,Shutter` · `Shutter,Iris`
+
+The comma forms set priority order. `Iris` modes need an active MFT lens.
+
+### ND filter — `GET|PUT /video/ndFilter` ⚠️
+Advertised (`stop` 0.0–15.0, plus `/video/ndFilter/displayMode` of
+`Stop`/`Number`/`Fraction`). **The Micro Studio 4K G2 has no built-in ND filter.** Ignore
+these unless probing proves otherwise.
+
+---
+
+## Lens — active MFT glass only
+
+Passive or fully manual lenses will not respond. All positional values are normalised
+`0.0–1.0` unless the lens reports native units.
+
+### Iris — `GET|PUT /lens/iris`
+```json
+{"normalised": 0.5}
+{"apertureStop": 4.0}
+{"apertureNumber": 4.0}
+```
+`GET` also returns `continuousApertureAutoExposure`. On `PUT` send one; priority is
+`apertureStop` > `normalised` > `apertureNumber`.
+
+### Zoom — `GET|PUT /lens/zoom`
+```json
+{"normalised": 0.25}
+{"focalLength": 24}
+```
+`focalLength` in mm, and it wins over `normalised`. Servo zoom lens required.
+
+### Focus — `GET|PUT /lens/focus`
+```json
+{"focus": 0.42}
+```
+Normalised 0.0–1.0. This is your focus-pull slider.
+
+### Autofocus — `PUT /lens/focus/doAutoFocus`
+No body. One-shot AF.
+
+---
+
+## Colour correction — full DaVinci-style primaries
+
+Live in-camera grading, baked into the SDI/HDMI output and recordings.
+
+| Endpoint | Fields | Range | Default |
+| --- | --- | --- | --- |
+| `/colorCorrection/lift` | red, green, blue, luma | −2.0 – 2.0 | 0.0 |
+| `/colorCorrection/gamma` | red, green, blue, luma | −4.0 – 4.0 | 0.0 |
+| `/colorCorrection/gain` | red, green, blue, luma | 0.0 – 16.0 | 0.0 |
+| `/colorCorrection/offset` | red, green, blue, luma | −8.0 – 8.0 | 0.0 |
+| `/colorCorrection/contrast` | pivot / adjust | 0.0–1.0 / 0.0–2.0 | 0.5 / 1.0 |
+| `/colorCorrection/color` | hue / saturation | −1.0–1.0 / 0.0–2.0 | 0.0 / 1.0 |
+| `/colorCorrection/lumaContribution` | lumaContribution | 0.0 – 1.0 | 1.0 |
+
+All `GET|PUT`. Example:
+```json
+{"red": 0.0, "green": 0.0, "blue": 0.0, "luma": 0.0}
 ```
 
-### Lens — active MFT lenses only
-```
-GET|PUT  /lens/iris
-GET|PUT  /lens/zoom
-GET|PUT  /lens/focus
-     PUT /lens/focus/doAutoFocus
-```
-Passive or manual glass will not respond. Iris/focus/zoom values are normalised 0.0–1.0
-plus lens-native representations; read `/lens/iris` first to see the shape your lens reports.
+A one-key "saturation to 0 for a mono look" or a matched-camera grade push is trivial here.
 
-### Colour correction
+---
+
+## Presets — the highest-value Stream Deck target
+
 ```
-GET|PUT  /colorCorrection/lift
-GET|PUT  /colorCorrection/gamma
-GET|PUT  /colorCorrection/gain
-GET|PUT  /colorCorrection/offset
-GET|PUT  /colorCorrection/contrast
-GET|PUT  /colorCorrection/color
-GET|PUT  /colorCorrection/lumaContribution
+GET    /presets              -> {"presets": ["Studio A", "Interview"]}
+POST   /presets              upload a .cameraPreset file (octet-stream)
+GET    /presets/active       -> {"preset": "Studio A"}
+PUT    /presets/active       {"preset": "Studio A"}
+GET    /presets/{name}       download the preset file
+PUT    /presets/{name}       save current camera state under this name
+DELETE /presets/{name}       delete
 ```
 
-### Transport
+One `PUT /presets/active` recalls an entire camera state — exposure, WB, colour, format.
+This is by far the best way to get a complete look onto a single Stream Deck key, and it
+sidesteps having to sequence a dozen individual calls.
+
+`PUT /presets/{name}` snapshotting current state means you can build "save this look"
+buttons too.
+
+---
+
+## Recording and transport
+
 ```
-GET|PUT  /transports/0
-GET|PUT  /transports/0/record
-GET|PUT  /transports/0/play
-GET|PUT  /transports/0/stop
-GET|PUT  /transports/0/playback
-GET      /transports/0/timecode
-GET      /transports/0/timecode/source
+GET|PUT /transports/0            {"mode": "InputPreview" | "Output"}
+GET|PUT /transports/0/record     {"recording": true, "clipName": "take-01"}
+GET|PUT /transports/0/play
+GET|PUT /transports/0/stop
+GET|PUT /transports/0/playback
+GET     /transports/0/timecode
+GET     /transports/0/timecode/source
 ```
-Recording needs external media on the USB-C port — which is the same port the Ethernet
+
+- `GET /transports/0/record` returns `{"recording": bool}` — drives a lit record button.
+- `PUT` accepts an optional **`clipName`**, so you can name takes from the Stream Deck.
+- Transport modes: `InputPreview` (live), `InputRecord`, `Output` (playback).
+- `playback` carries `type` (`Play`/`Jog`/`Shuttle`/`Var`), `loop`, `singleClip`,
+  `speed`, `position`.
+- Timecode is BCD-encoded — decode before display.
+
+**Requires external media on the USB-C port**, which is the same port your Ethernet
 adapter occupies. See the hardware note in the README.
 
-### System
-```
-GET      /system
-GET|PUT  /system/videoFormat
-GET|PUT  /system/codecFormat
-GET|PUT  /system/format
-GET      /system/supportedVideoFormats
-GET      /system/supportedCodecFormats
-GET      /system/supportedFormats
-```
+---
 
-### Presets
-```
-GET      /presets
-GET|PUT  /presets/active
-GET|PUT  /presets/{presetName}
-```
-Presets are the cheapest way to get a multi-setting "look" onto one Stream Deck key.
+## Format and codec
 
-### Audio
 ```
-GET|PUT  /audio/channel/{channelIndex}/input
-GET      /audio/channel/{channelIndex}/input/description
-GET      /audio/channel/{channelIndex}/supportedInputs
-GET|PUT  /audio/channel/{channelIndex}/level
-GET|PUT  /audio/channel/{channelIndex}/phantomPower
-GET|PUT  /audio/channel/{channelIndex}/padding
-GET|PUT  /audio/channel/{channelIndex}/lowCutFilter
-GET      /audio/channel/{channelIndex}/available
-```
-The G2's only audio input is a 3.5 mm stereo jack, so phantom power and padding are
-unlikely to do anything useful here.
-
-### Media
-```
-GET|PUT  /media/active
-GET      /media/workingset
-GET      /media/devices/{deviceName}
-GET|PUT  /media/devices/{deviceName}/doformat
-GET      /media/devices/doformatSupportedFilesystems
+GET     /system                        current codec + video format
+GET|PUT /system/codecFormat            {"codec": "BRaw:8_1", "container": "MOV"}
+GET|PUT /system/videoFormat            {"name": "3840x2160p29.97", "frameRate": "29.97",
+                                        "width": 3840, "height": 2160, "interlaced": false}
+GET|PUT /system/format                 codec + frame rate + off-speed + resolutions
+GET     /system/supportedCodecFormats
+GET     /system/supportedVideoFormats
+GET     /system/supportedFormats
 ```
 
-### Events
+Frame rates are strings from a fixed enum: `23.98` `24` `25` `29.97` `30` `47.95` `48`
+`50` `59.94` `60` `119.88` `120` (plus `.00` variants).
+
+`/system/format` also exposes **off-speed (variable frame rate) recording** —
+`offSpeedEnabled`, `offSpeedFrameRate`, and the min/max the current mode allows.
+
+Always read the `supported*` endpoints rather than hardcoding; the legal set depends on
+current sensor mode and resolution.
+
+---
+
+## Audio
+
 ```
-GET      /event/list
+GET|PUT /audio/channel/{i}/input          {"input": "3.5mm Left - Line"}
+GET     /audio/channel/{i}/input/description
+GET     /audio/channel/{i}/supportedInputs
+GET|PUT /audio/channel/{i}/level          {"gain": -6.0} or {"normalised": 0.7}
+GET|PUT /audio/channel/{i}/phantomPower   ⚠️
+GET|PUT /audio/channel/{i}/padding
+GET|PUT /audio/channel/{i}/lowCutFilter
+GET     /audio/channel/{i}/available
 ```
 
-## Not present on this body
+The input enum includes `XLR1 - Mic`, `XLR2 - Line`, etc. **The G2 has no XLR** — only
+built-in mics and a 3.5 mm jack. Realistic values here are `Camera - Left/Right/Mono` and
+the `3.5mm *` variants. Phantom power is meaningless on this body.
 
-Documented in the PDF but belonging to other camera families — expect `404`:
+`/input/description` reports the actual `gainRange` and `capabilities` for the selected
+input — query it rather than assuming.
 
-`/livestreams/*` · `/cloud/*` · `/slates/*` · `/immersive/*` · `/timelines/0/clear` ·
-most of `/monitoring/*` · most of `/camera/*` (`colorBars`, `tallyStatus`, `power`,
-`programFeedDisplay`, `timingReferenceLock`)
+On `PUT /level`, `gain` (dB) wins over `normalised`.
 
-Newer firmware may add some of these. Probe rather than assume.
+---
 
-## Websocket
+## Media management
 
-Connect to `/control/api/v1/event/websocket`, then send a subscribe message naming the
-properties you care about. Subscribable properties mirror the REST paths — `/video/iso`,
-`/lens/iris`, `/transports/0/record`, `/presets/active`, and so on. `GET /event/list`
-returns the list your firmware accepts.
+```
+GET     /media/workingset      volumes, free space, remaining record time, clip count
+GET|PUT /media/active          {"workingsetIndex": 0}
+GET     /media/devices/{name}  state: None|Scanning|Mounted|Uninitialised|Formatting|RaidComponent
+GET     /media/devices/{name}/doformat            fetch a format key
+PUT     /media/devices/{name}/doformat            {"key": "...", "filesystem": "ExFat", "volume": "..."}
+GET     /media/devices/doformatSupportedFilesystems
+```
 
-Message actions: `subscribe`, `unsubscribe`, `listSubscriptions`, `listProperties`,
-`websocketOpened`. Server pushes arrive as `{"type":"event","data":{...}}` with the
-changed property and its new value.
+`remainingRecordTime` (seconds) and `remainingSpace` are the useful bits — a "disk nearly
+full" warning on a Stream Deck key is easy. Formatting is deliberately two-step: `GET` a
+key, then `PUT` it back.
 
-This is what makes accurate Stream Deck button state possible — poll-free, and it catches
-changes made on the camera body or from another client.
+---
 
-## Practical notes
+## Playback timeline
 
-- Query `/video/supportedShutters`-style endpoints where your firmware has them; the legal
-  value sets are camera- and format-dependent.
-- Shutter can be addressed as angle or speed — check `/video/shutter/measurement` if present.
-- ISO is constrained to the dual-native ladder; arbitrary values are rejected with `400`.
-- `PUT` bodies are JSON objects matching the `GET` shape, e.g. `{"iso": 1250}`.
+```
+GET    /timelines/0        {"clips": [{"clipUniqueId": 1, "frameCount": 90000}]}
+DELETE /timelines/0        clear
+POST   /timelines/0/add    {"clips": 1} or {"clips": [1, 2, 3]}
+```
+
+Build a playback queue from clip IDs. Niche for a studio camera, but present.
+
+---
+
+## Live state via websocket
+
+Connect to `ws://<camera>/control/api/v1/event/websocket`.
+
+Subscribe:
+```json
+{"type": "request", "id": 1,
+ "data": {"action": "subscribe", "properties": ["/transports/0/record", "/video/iso"]}}
+```
+
+Actions: `subscribe` · `unsubscribe` · `listSubscriptions` · `listProperties`.
+
+Pushes arrive as:
+```json
+{"type": "event",
+ "data": {"action": "propertyValueChanged",
+          "property": "/video/iso",
+          "value": {"iso": 800}}}
+```
+
+**Version caveat, and it matters for button feedback.** The firmware dump examined here
+only declares websocket subscriptions for `/media/*`, `/system/*`, `/transports/*` and
+`/timelines/0`. The current published manual lists a far wider set including `/video/iso`,
+`/video/shutter`, `/video/whiteBalance`, `/lens/iris`, `/lens/focus`, `/colorCorrection/*`
+and `/presets/active`.
+
+So on older firmware you get push updates for record state but must **poll** for exposure
+values. `GET /event/list` on your camera returns the authoritative list — check it before
+designing button feedback, and update firmware if the wider set matters to you.
+
+Subscriptions also catch changes made on the camera body or from another client, which is
+what keeps a Stream Deck honest.
+
+---
+
+## Not on this body
+
+Documented in the manual, belongs to URSA Cine / Studio Camera / PYXIS bodies. Expect
+`404` or `501`:
+
+`/livestreams/*` · `/cloud/*` · `/slates/*` · `/immersive/*` · `/clips` ·
+most of `/monitoring/*` (focus assist, zebra, false colour, frame guides, LUTs, safe area) ·
+most of `/camera/*` (`colorBars`, `tallyStatus`, `power`, `programFeedDisplay`,
+`timingReferenceLock`)
+
+The monitoring and tally gaps are the notable ones — no false colour or zebra toggling,
+and no tally read-back over REST on this camera.
+
+---
+
+## Suggested Stream Deck mapping
+
+Ordered by value-per-key:
+
+| Key | Call |
+| --- | --- |
+| Recall look | `PUT /presets/active` |
+| Record toggle | `PUT /transports/0/record` + websocket feedback |
+| Auto white balance | `PUT /video/whiteBalance/doAuto` |
+| Autofocus | `PUT /lens/focus/doAutoFocus` |
+| WB presets (3200/4500/5600/7500) | `PUT /video/whiteBalance` |
+| ISO step up/down | `GET` then `PUT /video/iso` along the native ladder |
+| Shutter presets (1/50, 1/100, 180°) | `PUT /video/shutter` |
+| Iris nudge | `GET` then `PUT /lens/iris` normalised ± step |
+| Auto exposure on/off | `PUT /video/autoExposure` |
+| Saturation kill | `PUT /colorCorrection/color` |
+| Disk remaining | `GET /media/workingset` on a dial/display key |
+
+The stepping actions (ISO, iris, shutter) need read-modify-write against current state,
+which is exactly why the local control service in the README earns its place.

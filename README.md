@@ -43,14 +43,13 @@ Camera Setup. The REST API rides on that service; with it off, nothing responds.
 The published spec defines ~187 operations. Confirmed present on a Micro Studio 4K G2:
 
 - **Exposure** — `/video/iso`, `/video/gain`, `/video/shutter`, `/video/whiteBalance`,
-  `/video/whiteBalanceTint`, `/video/whiteBalance/doAuto`, `/video/autoExposure`,
-  `/video/ndFilter`
+  `/video/whiteBalanceTint`, `/video/whiteBalance/doAuto`, `/video/autoExposure`
 - **Lens** (active MFT only) — `/lens/iris`, `/lens/zoom`, `/lens/focus`,
   `/lens/focus/doAutoFocus`
 - **Colour** — `/colorCorrection/{lift,gamma,gain,offset,contrast,color,lumaContribution}`
 - **Transport** — `/transports/0/{record,play,stop,playback,timecode}`
 - **System** — `/system`, `/system/videoFormat`, `/system/codecFormat`, supported-format lists
-- **Presets** — `/presets`, `/presets/active`, `/presets/{name}`
+- **Presets** — list, recall, save, upload and delete whole camera states
 - **Audio** — per-channel input, level, phantom power, padding, low-cut filter
 - **Media** — `/media/workingset`, `/media/active`, format operations
 - **Events** — `/event/list` plus a websocket at
@@ -62,8 +61,10 @@ Endpoints in the manual that this body does **not** expose (they belong to URSA 
 Studio Camera bodies): `/livestreams/*`, `/cloud/*`, `/slates/*`, `/immersive/*`,
 and much of `/monitoring/*` and `/camera/*`.
 
-Endpoint coverage varies by firmware. Run `scripts/probe-camera.sh` against your own
-camera to get the authoritative list for your unit.
+Two caveats worth knowing before you build against this. The spec is generated from
+shared firmware code, so it advertises hardware this body does not have — ND filter and
+XLR audio endpoints both appear, and the G2 has neither. And endpoint coverage grows with
+firmware. Run `scripts/probe-camera.sh` against your own camera for ground truth.
 
 ## Discovering your camera's exact API
 
