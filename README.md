@@ -1,21 +1,93 @@
 # blackmagic-control
 
-Notes and tooling for controlling a **Blackmagic Micro Studio Camera 4K G2** over the
-Camera Control REST API — from an Elgato Stream Deck and from a local web page.
+Control a **Blackmagic Micro Studio Camera 4K G2** over the Camera Control REST API —
+from an Elgato Stream Deck and from a local web page.
 
-This branch currently contains the **feasibility assessment** and a discovery script.
-No application code yet.
+A small Python service owns the camera connection and exposes two surfaces:
 
-## TL;DR
+```
+Stream Deck ──HTTP──┐
+                    ├──> bmc service ──REST + websocket──> camera
+Phone / browser ────┘
+```
 
-| Question | Answer |
+Both go through the same action layer, so a Stream Deck key and a slider that do the
+same thing really do the same thing. The service holds a live websocket to the camera,
+which is what makes toggles, relative stepping and lit button state possible — the REST
+API only offers absolute setters.
+
+## Running it
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m bmc --camera micro-studio-g2.local
+```
+
+Then open **http://localhost:8080/** for the web page, and point Stream Deck buttons at
+`http://localhost:8080/deck/...` — see [`docs/streamdeck.md`](docs/streamdeck.md).
+
+Options: `--camera` hostname or IP, `--https` (needs a certificate generated in
+Blackmagic Camera Setup), `--port`, `--poll-interval`, `--verbose`. The same settings
+can come from `BMC_CAMERA`, `BMC_SCHEME`, `BMC_PORT` and friends.
+
+The service starts whether or not the camera is reachable and keeps retrying, so it is
+safe to launch at boot and power the camera on afterwards.
+
+**Before anything works:** enable the web media manager under *network access* in
+Blackmagic Camera Setup. The REST API is served by that same service.
+
+## Trying it without a camera
+
+A mock Micro Studio 4K G2 is included, modelled on the real thing down to the quirks —
+it 404s the endpoints this body lacks, snaps ISO to the native ladder, and only pushes
+transport state over its websocket so the service has to fall back to polling:
+
+```sh
+.venv/bin/python -m uvicorn tools.mock_camera:app --port 9000 &
+.venv/bin/python -m bmc --camera localhost:9000
+```
+
+## What it does
+
+The web page shows only what your camera actually implements, discovered at startup:
+
+- **Exposure** — ISO with ladder stepping, shutter (speed or angle), white balance with
+  presets and auto, tint, auto exposure
+- **Lens** — iris, focus, zoom, one-shot autofocus (active MFT lenses only)
+- **Colour** — saturation, with a passthrough for the rest of the DaVinci-style primaries
+- **Presets** — recall and save whole camera states
+- **Record** — toggle with live state, optional clip naming
+- **Media** — remaining record time on the active disk
+
+## Tests
+
+```sh
+.venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
+```
+
+34 tests run the real service against the mock camera over real HTTP and websockets,
+covering capability discovery, ladder stepping and clamping, read-back after write,
+error surfacing, the polling fallback, and live websocket updates.
+
+## Layout
+
+| Path | What it is |
 | --- | --- |
-| Is the Micro Studio 4K G2 supported by the REST API? | **Yes** — it is on Blackmagic's official compatibility list. |
-| Is there an official app to drive it? | **No.** Blackmagic ships the spec and a demo page, not a product. |
-| Is there an official sample? | **Yes**, but it is a gated download from blackmagicdesign.com, *not* on GitHub — which is why it's hard to find. |
-| Stream Deck support out of the box? | **No** native plugin from Elgato or Blackmagic. Community plugin exists but is embryonic. |
-| Web page out of the box? | **Yes** — a mature community web UI works today with zero build step. |
-| Biggest gotcha | The G2 has **one USB-C port** and **no Ethernet**. Networking needs a USB-C→Ethernet adapter on that same port. |
+| `bmc/camera.py` | REST client, capability probe, websocket subscriber, state cache |
+| `bmc/actions.py` | Semantic verbs (toggle, step, recall) built on absolute setters |
+| `bmc/ladders.py` | Discrete value ladders and stepping — pure, heavily tested |
+| `bmc/app.py` | FastAPI service: `/deck/*` plain text, `/api/*` JSON + websocket |
+| `bmc/web/` | The web page — vanilla JS, no build step |
+| `tools/mock_camera.py` | Fake camera for development and tests |
+| `scripts/probe-camera.sh` | Discover exactly what your camera supports |
+| `docs/rest-api-notes.md` | Capability reference for this camera body |
+| `docs/streamdeck.md` | Stream Deck / Companion setup and endpoint list |
+
+---
+
+# Background
+
+The assessment that led to the design above.
 
 ## The hardware constraint (read this first)
 
@@ -100,32 +172,18 @@ It is not on GitHub. Blackmagic hosts it behind a registration form on
 
 Both require accepting the download form, so they can't be fetched programmatically.
 
-## Recommended architecture
+## Why a local service rather than direct calls
 
-Rather than pointing the Stream Deck straight at the camera, run one small local service
-that owns the camera connection:
+The REST API offers absolute setters only. A control surface wants verbs — "one stop
+up", "toggle record", "is it recording?" — and every one of those needs current state.
+The service holds a live websocket subscription and does the read-modify-write, so the
+Stream Deck can stay stateless and the web page and the deck cannot drift apart.
 
-```
-Stream Deck ──HTTP──┐
-                    ├──> local control service ──REST+WS──> Micro Studio 4K G2
-Phone / browser ────┘
-```
+It also means no Stream Deck plugin had to be written: a generic HTTP button works on
+day one, and a native plugin is a later polish step rather than a prerequisite.
 
-Why:
-
-- **State.** Toggle-record, relative ISO/shutter stepping, and button feedback all need to
-  know the camera's current state. The service holds a live websocket subscription; the
-  Stream Deck just fires stateless HTTP.
-- **One integration.** The web page and the Stream Deck consume the same endpoints.
-- **No plugin to write initially.** A generic HTTP-request Stream Deck plugin, or Bitfocus
-  Companion's generic HTTP module, can drive it on day one. A native plugin becomes a
-  later polish step, not a prerequisite.
-- **Insulation.** Firmware differences, HTTPS/self-signed certs, and camera reboots get
-  handled in one place.
-
-The camera does send permissive CORS headers — a browser page on a different origin can
-call it directly — so a direct-to-camera web page is viable too. The proxy is about state
-and the Stream Deck, not about CORS.
+The camera does send permissive CORS headers, so a browser page could call it directly.
+The proxy is about state and the Stream Deck, not about CORS.
 
 ## References
 

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Camera control</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%234c8dff'/></svg>">
+</head>
+<body>
+  <header>
+    <span class="dot" id="dot"></span>
+    <div>
+      <h1 id="camera-name">Camera control</h1>
+      <div class="sub" id="status-line">connecting&hellip;</div>
+    </div>
+    <span class="spacer"></span>
+    <button class="rec hidden" id="record">REC</button>
+  </header>
+
+  <div class="banner" id="banner"></div>
+
+  <main>
+    <section class="card hidden" id="card-exposure">
+      <h2>Exposure</h2>
+
+      <div class="row" id="row-iso">
+        <span class="label">ISO</span>
+        <span class="value" id="iso-value">&mdash;</span>
+        <button data-deck="/deck/iso/down" title="One stop down">&minus;</button>
+        <button data-deck="/deck/iso/up" title="One stop up">+</button>
+        <span class="chips" id="iso-chips"></span>
+      </div>
+
+      <div class="row" id="row-shutter">
+        <span class="label">Shutter</span>
+        <span class="value" id="shutter-value">&mdash;</span>
+        <button data-deck="/deck/shutter/down">&minus;</button>
+        <button data-deck="/deck/shutter/up">+</button>
+        <span class="chips">
+          <button data-deck="/deck/shutter/50" data-shutter="50">1/50</button>
+          <button data-deck="/deck/shutter/60" data-shutter="60">1/60</button>
+          <button data-deck="/deck/shutter/100" data-shutter="100">1/100</button>
+          <button data-deck="/deck/shutter/125" data-shutter="125">1/125</button>
+          <button data-deck="/deck/shutter/angle/18000">180&deg;</button>
+        </span>
+      </div>
+
+      <div class="row" id="row-wb">
+        <span class="label">White bal.</span>
+        <span class="value" id="wb-value">&mdash;</span>
+        <input type="range" id="wb-slider" min="2500" max="10000" step="50" data-control="wb">
+      </div>
+      <div class="row">
+        <span class="label"></span>
+        <span class="chips" id="wb-chips"></span>
+        <button data-deck="/deck/wb/auto">Auto WB</button>
+      </div>
+
+      <div class="row" id="row-tint">
+        <span class="label">Tint</span>
+        <span class="value" id="tint-value">&mdash;</span>
+        <input type="range" id="tint-slider" min="-50" max="50" step="1" data-control="tint">
+      </div>
+
+      <div class="row" id="row-ae">
+        <span class="label">Auto exp.</span>
+        <button id="ae-toggle" class="wide">Auto exposure</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="card-lens">
+      <h2>Lens <span style="text-transform:none;font-weight:400"> &mdash; active MFT only</span></h2>
+
+      <div class="row" id="row-iris">
+        <span class="label">Iris</span>
+        <span class="value" id="iris-value">&mdash;</span>
+        <input type="range" id="iris-slider" min="0" max="1" step="0.01" data-control="iris">
+      </div>
+
+      <div class="row" id="row-focus">
+        <span class="label">Focus</span>
+        <span class="value" id="focus-value">&mdash;</span>
+        <input type="range" id="focus-slider" min="0" max="1" step="0.005" data-control="focus">
+        <button data-deck="/deck/focus/auto">AF</button>
+      </div>
+
+      <div class="row" id="row-zoom">
+        <span class="label">Zoom</span>
+        <span class="value" id="zoom-value">&mdash;</span>
+        <input type="range" id="zoom-slider" min="0" max="1" step="0.01" data-control="zoom">
+      </div>
+    </section>
+
+    <section class="card hidden" id="card-color">
+      <h2>Colour</h2>
+      <div class="row" id="row-saturation">
+        <span class="label">Saturation</span>
+        <span class="value" id="saturation-value">&mdash;</span>
+        <input type="range" id="saturation-slider" min="0" max="2" step="0.01" data-control="saturation">
+      </div>
+    </section>
+
+    <section class="card hidden" id="card-presets">
+      <h2>Presets</h2>
+      <div class="chips" id="preset-chips"></div>
+    </section>
+
+    <section class="card hidden" id="card-media">
+      <h2>Media</h2>
+      <div class="row">
+        <span class="label">Remaining</span>
+        <span class="value" id="media-remaining">&mdash;</span>
+        <span class="sub" id="media-volume"></span>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      <span id="capability-note"></span>
+      <a id="media-manager" href="#" target="_blank" rel="noopener">Web media manager</a>
+    </p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

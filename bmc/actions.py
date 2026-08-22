@@ -1,0 +1,334 @@
+"""High-level camera actions.
+
+The REST API is a set of absolute setters. A control surface wants verbs --
+"one stop up", "toggle record" -- which means reading current state, working out
+the next value and writing it back. That read-modify-write lives here so the web
+UI and the Stream Deck endpoints behave identically.
+
+Every action returns a short string suitable for a Stream Deck button title.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Sequence
+
+from .camera import Camera, CameraError
+from . import ladders
+
+
+# ------------------------------------------------------------------ helpers
+
+def _iso_ladder(camera: Camera) -> Sequence[int]:
+    """Prefer the camera's own list of legal ISOs over our built-in ladder."""
+    reported = camera.value("/video/supportedISOs")
+    if isinstance(reported, dict):
+        values = reported.get("supportedISOs") or reported.get("isos")
+        if isinstance(values, list) and values:
+            numeric = [int(v) for v in values if isinstance(v, (int, float))]
+            if numeric:
+                return sorted(numeric)
+    return ladders.ISO_LADDER
+
+
+def _require(camera: Camera, path: str) -> None:
+    if not camera.supports(path):
+        raise CameraError(f"{path} is not available on this camera")
+
+
+def _current_iso(camera: Camera) -> int:
+    value = camera.value("/video/iso")
+    if isinstance(value, dict) and isinstance(value.get("iso"), (int, float)):
+        return int(value["iso"])
+    gain = camera.value("/video/gain")
+    if isinstance(gain, dict) and isinstance(gain.get("gain"), (int, float)):
+        return ladders.gain_db_to_iso(float(gain["gain"]))
+    raise CameraError("current ISO is unknown")
+
+
+# ------------------------------------------------------------------- record
+
+async def record_set(camera: Camera, recording: bool, clip_name: str | None = None) -> str:
+    _require(camera, "/transports/0/record")
+    body: dict[str, Any] = {"recording": recording}
+    if recording and clip_name:
+        body["clipName"] = clip_name
+    await camera.put("/transports/0/record", body)
+    return "REC" if recording else "IDLE"
+
+
+async def record_toggle(camera: Camera, clip_name: str | None = None) -> str:
+    return await record_set(camera, not is_recording(camera), clip_name)
+
+
+def is_recording(camera: Camera) -> bool:
+    value = camera.value("/transports/0/record")
+    return bool(value.get("recording")) if isinstance(value, dict) else False
+
+
+# ---------------------------------------------------------------------- ISO
+
+async def iso_set(camera: Camera, iso: int) -> str:
+    _require(camera, "/video/iso")
+    await camera.put("/video/iso", {"iso": int(iso)})
+    return f"ISO {_current_iso(camera)}"
+
+
+async def iso_step(camera: Camera, delta: int) -> str:
+    _require(camera, "/video/iso")
+    target = ladders.step(_current_iso(camera), _iso_ladder(camera), delta)
+    return await iso_set(camera, target)
+
+
+async def gain_set(camera: Camera, gain_db: int) -> str:
+    _require(camera, "/video/gain")
+    clamped = int(ladders.clamp(gain_db, ladders.GAIN_MIN_DB, ladders.GAIN_MAX_DB))
+    await camera.put("/video/gain", {"gain": clamped})
+    return f"{clamped:+d} dB"
+
+
+# ------------------------------------------------------------------ shutter
+
+def shutter_summary(camera: Camera) -> str:
+    value = camera.value("/video/shutter")
+    if not isinstance(value, dict):
+        return "--"
+    if isinstance(value.get("shutterSpeed"), (int, float)) and value["shutterSpeed"]:
+        return f"1/{int(value['shutterSpeed'])}"
+    if isinstance(value.get("shutterAngle"), (int, float)) and value["shutterAngle"]:
+        return ladders.describe_shutter_angle(int(value["shutterAngle"]))
+    return "--"
+
+
+def _uses_angle(camera: Camera) -> bool:
+    """The camera reports whichever unit its shutter measurement is set to."""
+    value = camera.value("/video/shutter")
+    if not isinstance(value, dict):
+        return False
+    return bool(value.get("shutterAngle")) and not value.get("shutterSpeed")
+
+
+async def shutter_set_speed(camera: Camera, denominator: int) -> str:
+    _require(camera, "/video/shutter")
+    await camera.put("/video/shutter", {"shutterSpeed": int(denominator)})
+    return shutter_summary(camera)
+
+
+async def shutter_set_angle(camera: Camera, hundredths_of_degree: int) -> str:
+    _require(camera, "/video/shutter")
+    await camera.put("/video/shutter", {"shutterAngle": int(hundredths_of_degree)})
+    return shutter_summary(camera)
+
+
+async def shutter_step(camera: Camera, delta: int) -> str:
+    """Step the shutter in whichever unit the camera is currently reporting."""
+    _require(camera, "/video/shutter")
+    value = camera.value("/video/shutter") or {}
+    if _uses_angle(camera):
+        current = int(value.get("shutterAngle") or 18000)
+        return await shutter_set_angle(
+            camera, ladders.step(current, ladders.SHUTTER_ANGLES, delta)
+        )
+    current = int(value.get("shutterSpeed") or 50)
+    return await shutter_set_speed(
+        camera, ladders.step(current, ladders.SHUTTER_SPEEDS, delta)
+    )
+
+
+# ------------------------------------------------------------ white balance
+
+async def wb_set(camera: Camera, kelvin: int) -> str:
+    _require(camera, "/video/whiteBalance")
+    clamped = int(ladders.clamp(kelvin, ladders.WB_MIN, ladders.WB_MAX))
+    await camera.put("/video/whiteBalance", {"whiteBalance": clamped})
+    return f"{wb_current(camera)}K"
+
+
+async def wb_preset(camera: Camera, name: str) -> str:
+    key = name.strip().lower()
+    if key not in ladders.WB_PRESETS:
+        raise CameraError(
+            f"unknown white balance preset {name!r}; "
+            f"try one of {', '.join(sorted(ladders.WB_PRESETS))}"
+        )
+    return await wb_set(camera, ladders.WB_PRESETS[key])
+
+
+async def wb_step(camera: Camera, delta_kelvin: int) -> str:
+    return await wb_set(camera, wb_current(camera) + delta_kelvin)
+
+
+async def wb_auto(camera: Camera) -> str:
+    _require(camera, "/video/whiteBalance")
+    await camera.put("/video/whiteBalance/doAuto")
+    return "AWB"
+
+
+async def tint_set(camera: Camera, tint: int) -> str:
+    _require(camera, "/video/whiteBalanceTint")
+    clamped = int(ladders.clamp(tint, ladders.TINT_MIN, ladders.TINT_MAX))
+    await camera.put("/video/whiteBalanceTint", {"whiteBalanceTint": clamped})
+    return f"tint {clamped:+d}"
+
+
+def wb_current(camera: Camera) -> int:
+    value = camera.value("/video/whiteBalance")
+    if isinstance(value, dict) and isinstance(value.get("whiteBalance"), (int, float)):
+        return int(value["whiteBalance"])
+    return ladders.WB_PRESETS["daylight"]
+
+
+# --------------------------------------------------------------------- lens
+
+def _normalised(camera: Camera, path: str, key: str, fallback: float = 0.5) -> float:
+    value = camera.value(path)
+    if isinstance(value, dict):
+        for candidate in (key, "normalised"):
+            if isinstance(value.get(candidate), (int, float)):
+                return float(value[candidate])
+    return fallback
+
+
+async def iris_set(camera: Camera, normalised: float) -> str:
+    _require(camera, "/lens/iris")
+    await camera.put("/lens/iris", {"normalised": ladders.clamp(normalised, 0.0, 1.0)})
+    return iris_summary(camera)
+
+
+async def iris_nudge(camera: Camera, delta_percent: float) -> str:
+    current = _normalised(camera, "/lens/iris", "normalised")
+    return await iris_set(camera, ladders.step_normalised(current, delta_percent))
+
+
+def iris_summary(camera: Camera) -> str:
+    value = camera.value("/lens/iris")
+    if isinstance(value, dict) and isinstance(value.get("apertureStop"), (int, float)):
+        return f"f/{value['apertureStop']:g}"
+    return f"iris {_normalised(camera, '/lens/iris', 'normalised') * 100:.0f}%"
+
+
+async def focus_set(camera: Camera, normalised: float) -> str:
+    _require(camera, "/lens/focus")
+    await camera.put("/lens/focus", {"focus": ladders.clamp(normalised, 0.0, 1.0)})
+    return f"focus {_normalised(camera, '/lens/focus', 'focus') * 100:.0f}%"
+
+
+async def focus_auto(camera: Camera) -> str:
+    _require(camera, "/lens/focus")
+    await camera.put("/lens/focus/doAutoFocus")
+    return "AF"
+
+
+async def zoom_set(camera: Camera, normalised: float) -> str:
+    _require(camera, "/lens/zoom")
+    await camera.put("/lens/zoom", {"normalised": ladders.clamp(normalised, 0.0, 1.0)})
+    return f"zoom {_normalised(camera, '/lens/zoom', 'normalised') * 100:.0f}%"
+
+
+# ----------------------------------------------------------- auto exposure
+
+def autoexposure_mode(camera: Camera) -> str:
+    value = camera.value("/video/autoExposure")
+    if isinstance(value, dict):
+        mode = value.get("mode")
+        if isinstance(mode, dict):
+            return str(mode.get("mode") or "Off")
+        if isinstance(mode, str):
+            return mode
+    return "Off"
+
+
+async def autoexposure_set(camera: Camera, mode: str, ae_type: str = "Shutter") -> str:
+    _require(camera, "/video/autoExposure")
+    await camera.put("/video/autoExposure", {"mode": {"mode": mode, "type": ae_type}})
+    return f"AE {autoexposure_mode(camera)}"
+
+
+async def autoexposure_toggle(camera: Camera, ae_type: str = "Shutter") -> str:
+    is_off = autoexposure_mode(camera) == "Off"
+    return await autoexposure_set(camera, "Continuous" if is_off else "Off", ae_type)
+
+
+# ------------------------------------------------------------------ presets
+
+def preset_names(camera: Camera) -> list[str]:
+    value = camera.value("/presets")
+    if isinstance(value, dict) and isinstance(value.get("presets"), list):
+        return [str(name) for name in value["presets"]]
+    return []
+
+
+def preset_active(camera: Camera) -> str | None:
+    value = camera.value("/presets/active")
+    if isinstance(value, dict) and value.get("preset"):
+        return str(value["preset"])
+    return None
+
+
+async def preset_recall(camera: Camera, name: str) -> str:
+    _require(camera, "/presets/active")
+    await camera.put("/presets/active", {"preset": name})
+    return name
+
+
+async def preset_save(camera: Camera, name: str) -> str:
+    _require(camera, "/presets")
+    await camera.put(f"/presets/{name}")
+    return f"saved {name}"
+
+
+# ------------------------------------------------------------------- colour
+
+async def saturation_set(camera: Camera, saturation: float) -> str:
+    _require(camera, "/colorCorrection/color")
+    current = camera.value("/colorCorrection/color")
+    hue = float(current.get("hue", 0.0)) if isinstance(current, dict) else 0.0
+    value = ladders.clamp(saturation, 0.0, 2.0)
+    await camera.put("/colorCorrection/color", {"hue": hue, "saturation": value})
+    return f"sat {value:.2f}"
+
+
+async def color_set(camera: Camera, wheel: str, **channels: float) -> str:
+    """Set one colour wheel. ``wheel`` is lift, gamma, gain, offset, colour etc."""
+    path = f"/colorCorrection/{wheel}"
+    _require(camera, path)
+    await camera.put(path, {k: float(v) for k, v in channels.items()})
+    return wheel
+
+
+# ------------------------------------------------------------------- status
+
+def media_summary(camera: Camera) -> str:
+    """Remaining record time on the active disk, for an at-a-glance key."""
+    workingset = camera.value("/media/workingset")
+    if not isinstance(workingset, dict):
+        return "no media"
+    disks = workingset.get("workingset")
+    if not isinstance(disks, list):
+        return "no media"
+    for disk in disks:
+        if isinstance(disk, dict) and disk.get("activeDisk"):
+            seconds = disk.get("remainingRecordTime")
+            if isinstance(seconds, (int, float)):
+                hours, remainder = divmod(int(seconds), 3600)
+                return f"{hours}h{remainder // 60:02d}m"
+            return str(disk.get("volume") or "mounted")
+    return "no media"
+
+
+def status_line(camera: Camera) -> str:
+    """One-line summary for a Stream Deck display key."""
+    parts = [f"ISO {_safe(lambda: _current_iso(camera), '--')}", shutter_summary(camera)]
+    if camera.supports("/video/whiteBalance"):
+        parts.append(f"{wb_current(camera)}K")
+    if camera.supports("/lens/iris"):
+        parts.append(iris_summary(camera))
+    if is_recording(camera):
+        parts.append("REC")
+    return "  ".join(parts)
+
+
+def _safe(fn: Any, default: str) -> Any:
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 - a status line must never raise
+        return default
