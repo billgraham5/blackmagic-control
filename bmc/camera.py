@@ -91,6 +91,7 @@ class Camera:
         self._tasks: list[asyncio.Task[None]] = []
         self._connected = False
         self._identity: dict[str, Any] = {}
+        self._probe_results: dict[str, int | None] = {}
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -100,6 +101,10 @@ class Camera:
             base_url=self.settings.api_base,
             timeout=self.settings.request_timeout,
             verify=context if context is not None else True,
+            # The camera is on the local network. httpx would otherwise honour
+            # HTTP_PROXY/HTTPS_PROXY and send requests for a .local mDNS name to
+            # a proxy that cannot possibly resolve it.
+            trust_env=False,
         )
         try:
             await self._probe()
@@ -130,20 +135,37 @@ class Camera:
 
         The published spec covers a whole camera family, so the only reliable
         answer comes from asking this body directly.
-        """
-        candidates = list(dict.fromkeys(TRACKED + OPTIONAL))
-        results = await asyncio.gather(
-            *(self._probe_one(path) for path in candidates), return_exceptions=True
-        )
 
+        Probing is sequential on purpose. The camera runs a small embedded HTTP
+        server; firing several dozen simultaneous requests at it makes most of
+        them fail, and a failed probe is indistinguishable from an unsupported
+        endpoint. Slow and correct beats fast and wrong -- this runs once at
+        startup.
+        """
+        # One quick question before the full sweep. Probing is sequential, so an
+        # unreachable camera -- or the wrong scheme -- would otherwise burn a
+        # timeout per endpoint before admitting defeat.
+        status, _ = await self._probe_one("/system", attempts=1)
+        if status is None:
+            raise CameraUnavailable(
+                f"No response from {self.settings.api_base}. Check that the camera is on "
+                "the network and that the web media manager is enabled in Blackmagic "
+                "Camera Setup under 'network access'."
+            )
+
+        candidates = list(dict.fromkeys(TRACKED + OPTIONAL))
+        self._probe_results = {}
         reachable = False
-        for path, result in zip(candidates, results):
-            if isinstance(result, Exception):
+
+        for path in candidates:
+            status, value = await self._probe_one(path)
+            self._probe_results[path] = status
+            if status is None:
                 continue
             reachable = True
-            if result is not None:
+            if status == 200 and value is not None:
                 self._supported.add(path)
-                self._state[path] = result
+                self._state[path] = value
 
         if not reachable:
             raise CameraUnavailable(
@@ -161,20 +183,60 @@ class Camera:
         if isinstance(events, dict):
             available = set(events.get("events") or [])
             self._pushed = {p for p in self._supported if p in available}
+
         log.info(
             "camera ready: %d endpoints supported, %d pushed over websocket, %d polled",
             len(self._supported),
             len(self._pushed),
             len(self._supported) - len(self._pushed),
         )
+        unexpected = {
+            path: status
+            for path, status in self._probe_results.items()
+            if status not in (200, 404, 501)
+        }
+        if unexpected:
+            # Neither "here it is" nor "not supported" -- worth surfacing, since
+            # it silently costs the user a control.
+            log.warning(
+                "%d endpoints answered unexpectedly: %s",
+                len(unexpected),
+                ", ".join(f"{p} -> {s or 'no response'}" for p, s in sorted(unexpected.items())),
+            )
 
-    async def _probe_one(self, path: str) -> Any | None:
+    async def _probe_one(self, path: str, attempts: int = 3) -> tuple[int | None, Any]:
+        """Read one endpoint, returning (status, value).
+
+        A status of ``None`` means the request never completed.
+
+        Dropped connections and 5xx responses are retried: both mean the camera
+        was momentarily overwhelmed, and neither says anything about whether the
+        endpoint exists. 404 and 501 are definitive, so they are taken at face
+        value. Getting this wrong costs the user a control for the lifetime of
+        the process, which is a bad trade against a couple of extra requests.
+        """
         assert self._client is not None
-        response = await self._client.get(path)
-        if response.status_code in (404, 501):
-            return None
-        response.raise_for_status()
-        return _decode(response)
+        status: int | None = None
+        for attempt in range(attempts):
+            if attempt:
+                await asyncio.sleep(0.2 * attempt)
+            try:
+                response = await self._client.get(path)
+            except httpx.HTTPError as exc:
+                log.debug("probe %s attempt %d failed: %s", path, attempt + 1, exc)
+                status = None
+                continue
+            if response.status_code == 200:
+                return 200, _decode(response)
+            status = response.status_code
+            if status < 500:
+                return status, None
+        return status, None
+
+    @property
+    def probe_results(self) -> dict[str, int | None]:
+        """Every probed endpoint and the status it returned, for diagnostics."""
+        return dict(self._probe_results)
 
     # ---------------------------------------------------------------- requests
 
@@ -278,6 +340,7 @@ class Camera:
                 async with websockets.connect(
                     self.settings.websocket_url,
                     ssl=self.settings.ssl_context(),
+                    proxy=None,  # same reason as trust_env above
                 ) as socket:
                     backoff = 1.0
                     await self._subscribe(socket)

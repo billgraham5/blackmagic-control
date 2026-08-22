@@ -66,6 +66,7 @@ class Supervisor:
         """
         candidates = [self.settings, self.settings.with_scheme(self.settings.other_scheme)]
         delay = 2.0
+        first_failure = True
         while True:
             for settings in candidates:
                 camera = Camera(settings)
@@ -87,7 +88,12 @@ class Supervisor:
                 self.last_error = None
                 log.info("connected to %s", settings.api_base)
                 return
-            log.warning("camera not reachable: %s (retrying in %.0fs)", self.last_error, delay)
+            # Explain the problem once, then keep the retries to one short line
+            # so a camera that is simply switched off does not bury the console.
+            if first_failure:
+                log.warning("camera not reachable: %s", self.last_error)
+                first_failure = False
+            log.info("still waiting for %s, retrying in %.0fs", self.settings.camera_host, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 30.0)
 
@@ -322,6 +328,46 @@ def _api_router(supervisor: Supervisor) -> APIRouter:
             "wbPresets": dict(sorted(ladders.WB_PRESETS.items())),
             "state": camera.snapshot(),
         }
+
+    @router.get("/diagnostics", response_class=PlainTextResponse)
+    async def diagnostics() -> str:
+        """Every probed endpoint and what the camera answered.
+
+        This is the thing to look at when a control is missing from the UI:
+        404 and 501 mean the camera genuinely does not have it, anything else
+        means the probe failed and the control was lost for the wrong reason.
+        """
+        camera = supervisor.camera
+        results = camera.probe_results
+        if not results:
+            return f"not connected: {supervisor.last_error or 'no camera'}"
+
+        lines = [
+            f"camera     {supervisor.settings.api_base}",
+            f"connected  {camera.connected}",
+            f"identity   {camera.identity or '(none reported)'}",
+            "",
+            f"{len(camera.supported)} supported, "
+            f"{len(camera.pushed)} pushed over websocket, "
+            f"{len(camera.supported) - len(camera.pushed)} polled",
+            "",
+        ]
+        for path, status in sorted(results.items()):
+            if status == 200:
+                note = "ok"
+            elif status in (404, 501):
+                note = "not supported by this camera"
+            elif status is None:
+                note = "NO RESPONSE - probe failed, control lost for the wrong reason"
+            else:
+                note = "UNEXPECTED - control lost for the wrong reason"
+            lines.append(f"{str(status or '---'):>4}  {path:<44} {note}")
+
+        events = camera.value("/event/list")
+        if isinstance(events, dict):
+            lines += ["", "websocket-subscribable properties reported by the camera:"]
+            lines += [f"      {name}" for name in sorted(events.get("events") or [])] or ["      (none)"]
+        return "\n".join(lines)
 
     @router.get("/set/{control}", response_class=PlainTextResponse)
     async def set_control(control: str, v: float = Query(...)):

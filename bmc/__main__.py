@@ -1,4 +1,4 @@
-"""Command line entry point: ``python -m bmc --camera micro-studio-g2.local``."""
+"""Command line entry point: ``python -m bmc`` (see ``--help``)."""
 
 from __future__ import annotations
 

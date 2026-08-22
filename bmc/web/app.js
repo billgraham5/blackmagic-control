@@ -89,6 +89,14 @@ function renderRecord() {
   button.textContent = recording ? "STOP" : "REC";
 }
 
+/** Hide a section only when every control inside it is unavailable. */
+function showCardIfAnyRowVisible(cardId) {
+  const card = el(cardId);
+  if (!card) return;
+  const rows = [...card.querySelectorAll(".row")];
+  show(cardId, rows.some((row) => !row.classList.contains("hidden")));
+}
+
 function markActive(selector, attribute, current) {
   document.querySelectorAll(selector).forEach((button) => {
     button.classList.toggle("on", String(current) === button.dataset[attribute]);
@@ -116,6 +124,7 @@ function renderExposure() {
     if (!state.dragging.has("wb")) el("wb-slider").value = wb;
   }
   markActive("[data-wb]", "wb", wb);
+  show("row-wb-presets", supports("/video/whiteBalance"));
   show("row-wb", supports("/video/whiteBalance"));
 
   const tint = value("/video/whiteBalanceTint", "whiteBalanceTint");
@@ -132,7 +141,7 @@ function renderExposure() {
   aeButton.textContent = mode === "Off" ? "Auto exposure: off" : `Auto exposure: ${mode}`;
   show("row-ae", supports("/video/autoExposure"));
 
-  show("card-exposure", supports("/video/iso") || supports("/video/whiteBalance"));
+  showCardIfAnyRowVisible("card-exposure");
 }
 
 function renderLens() {
@@ -165,7 +174,7 @@ function renderLens() {
   }
   show("row-zoom", supports("/lens/zoom"));
 
-  show("card-lens", supports("/lens/iris") || supports("/lens/focus"));
+  showCardIfAnyRowVisible("card-lens");
 }
 
 function renderColor() {

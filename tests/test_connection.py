@@ -154,6 +154,52 @@ async def test_websocket_push_works_over_wss(self_signed_cert, camera_state):
                 await asyncio.wait_for(wait_for_push(), timeout=15)
 
 
+async def test_a_proxy_in_the_environment_is_ignored(monkeypatch, camera_state):
+    """A camera on the LAN must never be reached through a proxy.
+
+    httpx and websockets both honour HTTP_PROXY/HTTPS_PROXY by default, which
+    sends requests for a .local mDNS name to a proxy that cannot resolve it.
+    Pointing the proxy variables at a dead port proves we bypass them.
+    """
+    dead_proxy = f"http://127.0.0.1:{free_port()}"
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.setenv(name, dead_proxy)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    camera_port, service_port = free_port(), free_port()
+    settings = Settings(
+        camera_host=f"127.0.0.1:{camera_port}", camera_scheme="http", poll_interval=0.2
+    )
+    async with Background(mock_camera.app, camera_port):
+        async with Background(create_app(settings), service_port):
+            # trust_env=False here is about this test's own client reaching the
+            # service, not about what the service does with the camera.
+            async with httpx.AsyncClient(
+                base_url=f"http://127.0.0.1:{service_port}", timeout=10, trust_env=False
+            ) as client:
+                await _await_connection(client)
+                assert (await client.get("/deck/iso/800")).text == "ISO 800"
+
+                # The websocket must bypass the proxy too, so a push-only
+                # property still arrives.
+                async with httpx.AsyncClient(trust_env=False, timeout=10) as direct:
+                    await direct.put(
+                        f"http://127.0.0.1:{camera_port}/control/api/v1/transports/0/record",
+                        json={"recording": True},
+                    )
+
+                async def wait_for_push() -> None:
+                    while True:
+                        body = (await client.get("/api/state")).json()
+                        record = body["state"].get("/transports/0/record") or {}
+                        if record.get("recording"):
+                            return
+                        await asyncio.sleep(0.1)
+
+                await asyncio.wait_for(wait_for_push(), timeout=15)
+
+
 async def test_falls_back_to_the_other_scheme(self_signed_cert, camera_state):
     """Asking for HTTP when only HTTPS answers should still connect."""
     key, crt = self_signed_cert

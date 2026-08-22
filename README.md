@@ -53,6 +53,25 @@ safe to launch at boot and power the camera on afterwards.
 **Before anything works:** enable the web media manager under *network access* in
 Blackmagic Camera Setup. The REST API is served by that same service.
 
+## When a control is missing
+
+The service only shows what the camera answered for at startup. To see exactly what it
+found and why:
+
+```sh
+curl http://localhost:8080/api/diagnostics
+```
+
+Every probed endpoint appears with its status. `404` and `501` mean the camera genuinely
+does not have it. Anything else — or `NO RESPONSE` — means the probe failed and you lost
+a control for the wrong reason; restart and it should recover.
+
+Note that the camera is a small embedded HTTP server. Probing is deliberately sequential
+with retries on dropped connections and 5xx, because firing requests at it in parallel
+makes it drop most of them, and a dropped probe is indistinguishable from an unsupported
+endpoint. Requests never go through `HTTP_PROXY`/`HTTPS_PROXY` either — a `.local` mDNS
+name on your own LAN cannot be resolved by a proxy.
+
 ## Trying it without a camera
 
 A mock Micro Studio 4K G2 is included, modelled on the real thing down to the quirks —
@@ -82,7 +101,7 @@ The web page shows only what your camera actually implements, discovered at star
 .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
 ```
 
-47 tests run the real service against the mock camera over real HTTP and websockets,
+52 tests run the real service against the mock camera over real HTTP and websockets,
 covering capability discovery, ladder stepping and clamping, read-back after write,
 error surfacing, the polling fallback, and live websocket updates. Three of them
 generate a self-signed certificate and repeat the connection over HTTPS and `wss://`,
