@@ -58,18 +58,36 @@ class Supervisor:
         await self.camera.stop()
 
     async def _connect_loop(self) -> None:
+        """Connect, falling back to the other scheme before giving up on a round.
+
+        Whether the camera answers on HTTPS depends on a certificate having been
+        generated in Blackmagic Camera Setup, which is a setting someone can turn
+        off later. Trying both beats failing because of a stale flag.
+        """
+        candidates = [self.settings, self.settings.with_scheme(self.settings.other_scheme)]
         delay = 2.0
-        while not self.camera.connected:
-            try:
-                await self.camera.start()
+        while True:
+            for settings in candidates:
+                camera = Camera(settings)
+                try:
+                    await camera.start()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - try the next candidate
+                    self.last_error = str(exc)
+                    continue
+                if settings.camera_scheme != self.settings.camera_scheme:
+                    log.warning(
+                        "%s did not answer; using %s instead",
+                        self.settings.camera_scheme,
+                        settings.camera_scheme,
+                    )
+                self.camera = camera
+                self.settings = settings
                 self.last_error = None
-                log.info("connected to %s", self.settings.camera_host)
+                log.info("connected to %s", settings.api_base)
                 return
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - report and keep trying
-                self.last_error = str(exc)
-                log.warning("camera not reachable: %s (retrying in %.0fs)", exc, delay)
+            log.warning("camera not reachable: %s (retrying in %.0fs)", self.last_error, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 30.0)
 
@@ -107,7 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await http_exception_handler(request, exc)
 
     app.include_router(_deck_router(supervisor))
-    app.include_router(_api_router(supervisor, settings))
+    app.include_router(_api_router(supervisor))
 
     if WEB_ROOT.is_dir():
         app.mount("/static", StaticFiles(directory=WEB_ROOT), name="static")
@@ -282,7 +300,7 @@ def _deck_router(supervisor: Supervisor) -> APIRouter:
 
 # ---------------------------------------------------------------------- api
 
-def _api_router(supervisor: Supervisor, settings: Settings) -> APIRouter:
+def _api_router(supervisor: Supervisor) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["api"])
 
     @router.get("/state")
@@ -292,9 +310,9 @@ def _api_router(supervisor: Supervisor, settings: Settings) -> APIRouter:
             "connected": camera.connected,
             "error": supervisor.last_error,
             "camera": {
-                "host": settings.camera_host,
-                "apiBase": settings.api_base,
-                "mediaManager": settings.media_manager_url,
+                "host": supervisor.settings.camera_host,
+                "apiBase": supervisor.settings.api_base,
+                "mediaManager": supervisor.settings.media_manager_url,
                 "identity": camera.identity,
             },
             "supported": sorted(camera.supported),

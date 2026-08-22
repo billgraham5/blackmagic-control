@@ -8,7 +8,7 @@ import logging
 import uvicorn
 
 from .app import create_app
-from .config import Settings
+from .config import Settings, parse_camera
 
 
 def main() -> None:
@@ -20,12 +20,25 @@ def main() -> None:
     parser.add_argument(
         "--camera",
         default=defaults.camera_host,
-        help="camera hostname or IP (default: %(default)s)",
+        help=(
+            "camera hostname, host:port, or the full URL shown in Blackmagic "
+            "Camera Setup (default: %(default)s)"
+        ),
     )
-    parser.add_argument(
+    scheme_group = parser.add_mutually_exclusive_group()
+    scheme_group.add_argument(
         "--https",
-        action="store_true",
-        help="use HTTPS/WSS; needs a certificate generated in Blackmagic Camera Setup",
+        dest="scheme",
+        action="store_const",
+        const="https",
+        help="force HTTPS/WSS; needs a certificate generated in Blackmagic Camera Setup",
+    )
+    scheme_group.add_argument(
+        "--http",
+        dest="scheme",
+        action="store_const",
+        const="http",
+        help="force plain HTTP/WS",
     )
     parser.add_argument("--host", default=defaults.host, help="bind address")
     parser.add_argument("--port", type=int, default=defaults.port, help="bind port")
@@ -47,9 +60,11 @@ def main() -> None:
     # at INFO would print tens of lines a second and bury anything useful.
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
+    # A scheme in the URL beats the default; an explicit flag beats both.
+    host, url_scheme = parse_camera(args.camera)
     settings = Settings(
-        camera_host=args.camera,
-        camera_scheme="https" if args.https else "http",
+        camera_host=host,
+        camera_scheme=args.scheme or url_scheme or defaults.camera_scheme,
         host=args.host,
         port=args.port,
         poll_interval=args.poll_interval,

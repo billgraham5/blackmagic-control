@@ -18,11 +18,11 @@ Derived from the OpenAPI specification served by an actual Micro Studio Camera 4
 
 | Item | Value |
 | --- | --- |
-| Base URL | `http://<camera>.local/control/api/v1/` |
-| Secure base URL | `https://<camera>.local/control/api/v1/` — needs *Generate Certificate* in Blackmagic Camera Setup; self-signed |
-| OpenAPI docs | `http://<camera>.local/control/documentation.html` |
-| Websocket | `ws://<camera>.local/control/api/v1/event/websocket` |
-| Web media manager | `http://<camera>.local/` |
+| Base URL | `https://Micro-Studio-Camera-4K-G2.local/control/api/v1/` |
+| Plain HTTP | `http://Micro-Studio-Camera-4K-G2.local/control/api/v1/` — available unless secure web media manager is enforced |
+| OpenAPI docs | `https://Micro-Studio-Camera-4K-G2.local/control/documentation.html` |
+| Websocket | `wss://Micro-Studio-Camera-4K-G2.local/control/api/v1/event/websocket` (`ws://` on plain HTTP) |
+| Web media manager | `https://Micro-Studio-Camera-4K-G2.local/` |
 | Auth | None declared — access control is network-level |
 | CORS | Permissive; browser pages on other origins can call the API directly |
 
@@ -30,8 +30,13 @@ Derived from the OpenAPI specification served by an actual Micro Studio Camera 4
 Setup — the REST API is served by that same service. Renaming the camera changes its
 mDNS hostname.
 
-Mixed content rule: an HTTPS page cannot call `http://` on the camera. Serve your page
-over plain HTTP, or generate the camera certificate and trust it once in the browser.
+HTTPS means the camera has a certificate generated in Blackmagic Camera Setup. It is
+self-signed and issued to the mDNS name, so anything talking to it must skip
+verification — a browser needs the warning overridden once, and clients need hostname
+checking disabled. `wss://` needs the same treatment as `https://`.
+
+Mixed content rule: an HTTPS page cannot call `http://` on the camera, and vice versa
+for websockets. Keep the page and the camera on the same scheme.
 
 Conventions: `GET` returns a JSON object with the property wrapped by name
 (`{"iso": 400}`). `PUT` takes the same shape and returns `200`/`204`; `400` on a rejected
@@ -281,7 +286,7 @@ Build a playback queue from clip IDs. Niche for a studio camera, but present.
 
 ## Live state via websocket
 
-Connect to `ws://<camera>/control/api/v1/event/websocket`.
+Connect to `wss://Micro-Studio-Camera-4K-G2.local/control/api/v1/event/websocket`.
 
 Subscribe:
 ```json

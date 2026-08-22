@@ -20,15 +20,32 @@ API only offers absolute setters.
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m bmc --camera micro-studio-g2.local
+.venv/bin/python -m bmc
+```
+
+The default camera is `https://Micro-Studio-Camera-4K-G2.local`. To point at a
+different one, `--camera` takes a hostname, `host:port`, or the full URL that
+Blackmagic Camera Setup displays, pasted verbatim:
+
+```sh
+.venv/bin/python -m bmc --camera https://Micro-Studio-Camera-4K-G2.local
+.venv/bin/python -m bmc --camera 192.168.1.42 --http
 ```
 
 Then open **http://localhost:8080/** for the web page, and point Stream Deck buttons at
 `http://localhost:8080/deck/...` — see [`docs/streamdeck.md`](docs/streamdeck.md).
 
-Options: `--camera` hostname or IP, `--https` (needs a certificate generated in
-Blackmagic Camera Setup), `--port`, `--poll-interval`, `--verbose`. The same settings
-can come from `BMC_CAMERA`, `BMC_SCHEME`, `BMC_PORT` and friends.
+A scheme in the URL wins over the default, and `--https` / `--http` wins over both.
+If the chosen scheme does not answer, the service tries the other one before backing
+off — HTTPS depends on a certificate having been generated in Blackmagic Camera Setup,
+and that is a setting someone can turn off later.
+
+Other options: `--port`, `--poll-interval`, `--verbose`. The same settings can come
+from `BMC_CAMERA`, `BMC_SCHEME`, `BMC_PORT` and friends.
+
+The camera's certificate is self-signed and issued to its mDNS name, so TLS
+verification is off by default — there is no CA to check it against. Set
+`BMC_VERIFY_TLS=1` if you have installed the camera's certificate yourself.
 
 The service starts whether or not the camera is reachable and keeps retrying, so it is
 safe to launch at boot and power the camera on afterwards.
@@ -44,7 +61,7 @@ transport state over its websocket so the service has to fall back to polling:
 
 ```sh
 .venv/bin/python -m uvicorn tools.mock_camera:app --port 9000 &
-.venv/bin/python -m bmc --camera localhost:9000
+.venv/bin/python -m bmc --camera http://localhost:9000
 ```
 
 ## What it does
@@ -65,9 +82,11 @@ The web page shows only what your camera actually implements, discovered at star
 .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
 ```
 
-34 tests run the real service against the mock camera over real HTTP and websockets,
+47 tests run the real service against the mock camera over real HTTP and websockets,
 covering capability discovery, ladder stepping and clamping, read-back after write,
-error surfacing, the polling fallback, and live websocket updates.
+error surfacing, the polling fallback, and live websocket updates. Three of them
+generate a self-signed certificate and repeat the connection over HTTPS and `wss://`,
+which is how the camera is actually configured.
 
 ## Layout
 
@@ -141,7 +160,7 @@ firmware. Run `scripts/probe-camera.sh` against your own camera for ground truth
 ## Discovering your camera's exact API
 
 ```sh
-./scripts/probe-camera.sh micro-studio-g2.local
+./scripts/probe-camera.sh
 ```
 
 This pulls `/control/documentation.html` (the camera's own OpenAPI documentation) and

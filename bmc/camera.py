@@ -95,10 +95,11 @@ class Camera:
     # ---------------------------------------------------------------- lifecycle
 
     async def start(self) -> None:
+        context = self.settings.ssl_context()
         self._client = httpx.AsyncClient(
             base_url=self.settings.api_base,
             timeout=self.settings.request_timeout,
-            verify=self.settings.verify_tls,
+            verify=context if context is not None else True,
         )
         try:
             await self._probe()
@@ -276,7 +277,7 @@ class Camera:
             try:
                 async with websockets.connect(
                     self.settings.websocket_url,
-                    ssl=None if self.settings.camera_scheme == "http" else False,
+                    ssl=self.settings.ssl_context(),
                 ) as socket:
                     backoff = 1.0
                     await self._subscribe(socket)

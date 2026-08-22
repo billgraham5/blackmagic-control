@@ -2,45 +2,69 @@
 #
 # Discover exactly what the Camera Control REST API on your camera supports.
 #
-#   ./scripts/probe-camera.sh micro-studio-g2.local
-#   ./scripts/probe-camera.sh 192.168.1.42 --https
+#   ./scripts/probe-camera.sh
+#   ./scripts/probe-camera.sh https://Micro-Studio-Camera-4K-G2.local
+#   ./scripts/probe-camera.sh 192.168.1.42 --http
+#
+# Accepts a bare hostname or the full URL shown in Blackmagic Camera Setup.
+# Defaults to HTTPS and falls back to HTTP if the camera does not answer.
 #
 # Writes the camera's own OpenAPI documentation and a per-endpoint support report
 # to ./camera-probe/.
 
 set -uo pipefail
 
-HOST="${1:-}"
-SCHEME=http
-[[ "${2:-}" == "--https" ]] && SCHEME=https
+TARGET="${1:-Micro-Studio-Camera-4K-G2.local}"
+FORCED_SCHEME=""
+for arg in "$@"; do
+  [[ "$arg" == "--https" ]] && FORCED_SCHEME=https
+  [[ "$arg" == "--http" ]] && FORCED_SCHEME=http
+done
 
-if [[ -z "$HOST" ]]; then
-  echo "usage: $0 <camera-hostname-or-ip> [--https]" >&2
-  exit 64
+# Split a full URL into scheme and host so the Camera Setup URL can be pasted in.
+if [[ "$TARGET" == *://* ]]; then
+  URL_SCHEME="${TARGET%%://*}"
+  HOST="${TARGET#*://}"
+  HOST="${HOST%%/*}"
+else
+  URL_SCHEME=""
+  HOST="${TARGET%%/*}"
 fi
 
-BASE="$SCHEME://$HOST/control/api/v1"
+SCHEME="${FORCED_SCHEME:-${URL_SCHEME:-https}}"
+OTHER=$([[ "$SCHEME" == https ]] && echo http || echo https)
+
 OUT=camera-probe
-CURL=(curl --silent --show-error --max-time 5)
-[[ "$SCHEME" == https ]] && CURL+=(--insecure)   # camera cert is self-signed
+# The camera's certificate is self-signed and issued to its mDNS name, so
+# verification would fail even when everything is working.
+CURL=(curl --silent --show-error --max-time 5 --insecure)
 
-mkdir -p "$OUT"
+probe_base() {
+  "${CURL[@]}" --fail --output /dev/null "$1://$HOST/control/api/v1/system"
+}
 
-echo "Probing $BASE"
-echo
-
-if ! "${CURL[@]}" --fail --output /dev/null "$BASE/system"; then
-  cat >&2 <<'MSG'
+if ! probe_base "$SCHEME"; then
+  if [[ -z "$FORCED_SCHEME" ]] && probe_base "$OTHER"; then
+    echo "note: $SCHEME did not answer, using $OTHER instead" >&2
+    SCHEME="$OTHER"
+  else
+    cat >&2 <<'MSG'
 Could not reach the API.
 
 Check that:
   - the camera is on the network (Micro Studio 4K G2 needs a USB-C -> Ethernet adapter)
   - "web media manager" is enabled under network access in Blackmagic Camera Setup
   - the hostname resolves (try the raw IP address instead of the .local name)
-  - if the camera has a generated certificate, retry with --https
 MSG
-  exit 1
+    exit 1
+  fi
 fi
+
+BASE="$SCHEME://$HOST/control/api/v1"
+echo "Probing $BASE"
+echo
+
+mkdir -p "$OUT"
 
 echo "== Camera identity =="
 "${CURL[@]}" "$BASE/system" | tee "$OUT/system.json"
