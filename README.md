@@ -94,7 +94,8 @@ The web page shows only what your camera actually implements, discovered at star
 - **Presets** — recall and save whole camera states
 - **Record** — toggle with live state, optional clip naming
 - **Monitoring** — zebra, false colour, focus assist, frame guides, clean feed, LUT and
-  colour bars, plus tally read-back, on firmware that has them
+  colour bars, plus tally read-back, on firmware that has them. Overlays are per output;
+  pick which one they act on and the choice is remembered
 - **Media** — remaining record time on the active disk
 
 ## Tests
@@ -103,7 +104,7 @@ The web page shows only what your camera actually implements, discovered at star
 .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
 ```
 
-61 tests run the real service against the mock camera over real HTTP and websockets,
+64 tests run the real service against the mock camera over real HTTP and websockets,
 covering capability discovery, ladder stepping and clamping, read-back after write,
 error surfacing, the polling fallback, and live websocket updates. Three of them
 generate a self-signed certificate and repeat the connection over HTTPS and `wss://`,

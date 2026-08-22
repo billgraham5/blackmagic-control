@@ -458,13 +458,34 @@ class Camera:
         finally:
             self._listeners.discard(queue)
 
+    def snapshot_message(self) -> dict[str, Any]:
+        """A complete state message, used on connect and to resynchronise."""
+        return {
+            "type": "snapshot",
+            "connected": self._connected,
+            "supported": sorted(self._supported),
+            "state": dict(self._state),
+        }
+
     def _broadcast(self, message: dict[str, Any]) -> None:
         for queue in list(self._listeners):
             try:
                 queue.put_nowait(message)
             except asyncio.QueueFull:
-                # A stalled client must not block the camera loop.
-                self._listeners.discard(queue)
+                # Never stop updating a client. Dropping the listener leaves the
+                # page connected and looking healthy while it silently shows
+                # stale values until someone reloads it. Throw the backlog away
+                # and queue one snapshot instead, so it catches up in a single
+                # message no matter how far behind it fell.
+                while not queue.empty():
+                    try:
+                        queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                try:
+                    queue.put_nowait(self.snapshot_message())
+                except asyncio.QueueFull:  # pragma: no cover - just drained it
+                    pass
 
     # --------------------------------------------------------------- websocket
 

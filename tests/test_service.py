@@ -219,24 +219,27 @@ async def test_service_starts_without_a_camera_and_reports_why():
 
 async def test_monitoring_displays_are_discovered(service):
     body = (await service.get("/api/state")).json()
-    assert body["displays"] == ["hdmi", "sdi"]
-    assert "/monitoring/hdmi/falseColor" in body["supported"]
-    # sdi only implements zebra, so the rest must not be claimed for it.
-    assert "/monitoring/sdi/falseColor" not in body["supported"]
+    assert body["displays"] == ["MainSDI", "HDMI", "FrontUSBC"]
+    assert "/monitoring/MainSDI/falseColor" in body["supported"]
+    assert "/monitoring/FrontUSBC/falseColor" in body["supported"]
+    # Only the SDI output carries the full overlay set on this mock, so the
+    # others must not have it claimed for them.
+    assert "/monitoring/MainSDI/displayLUT" in body["supported"]
+    assert "/monitoring/HDMI/displayLUT" not in body["supported"]
 
 
 async def test_overlay_toggles_without_dropping_its_other_settings(service, camera_state):
     """Zebra carries a level; a toggle that sent only the flag would lose it."""
     assert (await deck(service, "monitor/zebra/toggle")).text == "zebra on"
-    assert camera_state.state["/monitoring/hdmi/zebra"] == {"enabled": True, "level": 75}
+    assert camera_state.state["/monitoring/MainSDI/zebra"] == {"enabled": True, "level": 75}
     assert (await deck(service, "monitor/zebra/toggle")).text == "zebra off"
 
 
 async def test_overlay_can_be_set_explicitly_and_per_display(service, camera_state):
     assert (await deck(service, "monitor/falseColor/on")).text == "falseColor on"
-    assert (await deck(service, "monitor/zebra/on?display=sdi")).text == "zebra on"
-    assert camera_state.state["/monitoring/sdi/zebra"]["enabled"] is True
-    assert camera_state.state["/monitoring/hdmi/zebra"]["enabled"] is False
+    assert (await deck(service, "monitor/zebra/on?display=HDMI")).text == "zebra on"
+    assert camera_state.state["/monitoring/HDMI/zebra"]["enabled"] is True
+    assert camera_state.state["/monitoring/MainSDI/zebra"]["enabled"] is False
 
 
 async def test_unknown_overlay_says_so(service):
@@ -256,3 +259,25 @@ async def test_the_cameras_own_iso_list_drives_stepping(service):
     assert "/video/supportedISOs" in body["supported"]
     await deck(service, "iso/400")
     assert (await deck(service, "iso/up")).text == "ISO 800"
+
+
+async def test_default_overlay_display_follows_the_cameras_own_order(service):
+    """The camera lists displays in its own order; alphabetical is not it.
+
+    The web page and the deck must resolve to the same display, or a button
+    toggles one output while showing the state of another.
+    """
+    body = (await service.get("/api/state")).json()
+    assert body["displays"] == ["MainSDI", "HDMI", "FrontUSBC"]
+
+    await deck(service, "monitor/zebra/toggle")
+    state = (await service.get("/api/state")).json()["state"]
+    assert state["/monitoring/MainSDI/zebra"]["enabled"] is True
+    assert state["/monitoring/HDMI/zebra"]["enabled"] is False
+    assert state["/monitoring/FrontUSBC/zebra"]["enabled"] is False
+
+
+async def test_each_display_is_addressable(service, camera_state):
+    for display in ("HDMI", "FrontUSBC", "MainSDI"):
+        assert (await deck(service, f"monitor/cleanFeed/on?display={display}")).text == "cleanFeed on"
+        assert camera_state.state[f"/monitoring/{display}/cleanFeed"]["enabled"] is True

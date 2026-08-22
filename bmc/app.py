@@ -467,14 +467,7 @@ def _api_router(supervisor: Supervisor) -> APIRouter:
         await socket.accept()
         camera = supervisor.camera
         try:
-            await socket.send_json(
-                {
-                    "type": "snapshot",
-                    "connected": camera.connected,
-                    "supported": sorted(camera.supported),
-                    "state": camera.snapshot(),
-                }
-            )
+            await socket.send_json(camera.snapshot_message())
             async with camera.listen() as queue:
 
                 async def pump() -> None:

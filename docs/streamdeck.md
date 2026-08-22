@@ -75,8 +75,17 @@ Active MFT lenses only.
 
 ### Monitoring overlays
 
-Available on current firmware. Overlays apply to the first display the service found;
-add `?display=sdi` to target another.
+Available on current firmware. Overlays are per output, and a Micro Studio 4K G2 has
+three: `MainSDI`, `HDMI` and `FrontUSBC`. Without `?display=`, the endpoint acts on the
+first output the camera lists — `MainSDI` — which is very likely not the one you are
+looking at. Name the output explicitly:
+
+```
+/deck/monitor/zebra/toggle?display=HDMI
+/deck/monitor/cleanFeed/on?display=FrontUSBC
+```
+
+`GET /api/state` lists the outputs your camera reports under `displays`.
 
 | URL | Notes |
 | --- | --- |

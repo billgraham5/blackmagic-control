@@ -37,6 +37,9 @@ const state = {
   values: {},
   presets: [],
   overlays: [],
+  displays: [],
+  /** Which monitoring output the overlay buttons act on. */
+  display: null,
   wbPresets: {},
   /** Sliders the user is currently dragging, so pushes do not fight them. */
   dragging: new Set(),
@@ -214,27 +217,77 @@ function renderColor() {
 /* Overlays live under /monitoring/<display>/<name>, and which display and which
  * overlays exist varies by body and firmware, so the buttons are built from
  * whatever the probe found rather than hardcoded. */
+function rememberedDisplay() {
+  try {
+    return localStorage.getItem("bmc.display");
+  } catch {
+    return null; // private windows and blocked site data both throw
+  }
+}
+
+function rememberDisplay(name) {
+  try {
+    localStorage.setItem("bmc.display", name);
+  } catch {
+    /* nothing to do; the choice just will not survive a reload */
+  }
+}
+
 function overlayButtons() {
   const seen = new Map();
+  const display = state.display;
   state.overlays.forEach((path) => {
     if (path === "/camera/colorBars") {
       seen.set("colorBars", { path, url: "/deck/colorbars/toggle" });
       return;
     }
-    const name = path.split("/").pop();
+    const parts = path.split("/"); // ["", "monitoring", <display>, <name>]
+    const name = parts.pop();
     if (!OVERLAY_NAMES[name] || seen.has(name)) return;
-    seen.set(name, { path, url: `/deck/monitor/${name}/toggle` });
+    // Only offer overlays for the output being controlled, so the button's lit
+    // state and the endpoint it calls are always the same display.
+    if (parts.length === 3 && parts[2] !== display) return;
+    seen.set(name, {
+      path,
+      url: `/deck/monitor/${name}/toggle` + (display ? `?display=${encodeURIComponent(display)}` : ""),
+    });
   });
   // Fixed order, so buttons do not shuffle between renders or cameras.
   const order = Object.keys(OVERLAY_NAMES);
   return new Map([...seen].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])));
 }
 
+function renderDisplays() {
+  const container = el("display-chips");
+  show("row-display", state.displays.length > 1);
+  if (state.displays.length <= 1) return;
+
+  if (container.dataset.built !== state.displays.join(",")) {
+    container.textContent = "";
+    state.displays.forEach((name) => {
+      const button = document.createElement("button");
+      button.textContent = name;
+      button.dataset.display = name;
+      button.addEventListener("click", () => {
+        state.display = name;
+        rememberDisplay(name);
+        el("monitor-toggles").dataset.built = ""; // force a rebuild
+        renderAll();
+      });
+      container.append(button);
+    });
+    container.dataset.built = state.displays.join(",");
+  }
+  markActive("[data-display]", "display", state.display);
+}
+
 function renderMonitoring() {
+  renderDisplays();
   const buttons = overlayButtons();
   const container = el("monitor-toggles");
 
-  if (container.dataset.built !== String(buttons.size)) {
+  const signature = `${state.display}:${[...buttons.keys()].join(",")}`;
+  if (container.dataset.built !== signature) {
     container.textContent = "";
     buttons.forEach((entry, name) => {
       const button = document.createElement("button");
@@ -243,7 +296,7 @@ function renderMonitoring() {
       button.addEventListener("click", () => send(entry.url));
       container.append(button);
     });
-    container.dataset.built = String(buttons.size);
+    container.dataset.built = signature;
   }
 
   buttons.forEach((entry, name) => {
@@ -371,21 +424,40 @@ function wireControls() {
       push(slider.value);
     });
 
-    /* Stay "dragging" until the final write lands, so a poll that is already
-     * in flight cannot snap the label back to the old value. */
+    /* Stay "dragging" until the final write lands, so a poll or push that is
+     * already in flight cannot snap the label back to the old value. */
     const commit = async () => {
       if (!state.dragging.has(control)) return;
       showLive();
       await send(`/api/set/${control}?v=${slider.value}`);
       state.dragging.delete(control);
+      /* The camera snaps to its own legal values, so a fine adjustment often
+       * lands somewhere other than where you left the slider. Re-read rather
+       * than assume, otherwise the page shows a value the camera never took. */
+      await resync();
       renderAll();
     };
 
     slider.addEventListener("change", commit);
-    slider.addEventListener("pointerup", commit);
-    slider.addEventListener("pointercancel", commit);
     slider.addEventListener("blur", commit);
+    /* On the window, not the slider: releasing outside the control -- easy to
+     * do when nudging a small amount -- would otherwise leave the control
+     * marked as dragging forever, freezing its display until a page reload. */
+    window.addEventListener("pointerup", commit);
+    window.addEventListener("pointercancel", commit);
   });
+}
+
+/** Pull current state from the service, replacing what we hold. */
+async function resync() {
+  try {
+    const response = await fetch("/api/state");
+    const data = await response.json();
+    state.values = data.state || {};
+    state.supported = new Set(data.supported || []);
+  } catch {
+    /* leave what we have; the websocket will correct us */
+  }
 }
 
 /* -------------------------------------------------------------- connection */
@@ -398,6 +470,10 @@ async function loadState() {
   state.values = data.state || {};
   state.presets = data.presets || [];
   state.overlays = data.overlays || [];
+  state.displays = data.displays || [];
+  if (!state.displays.includes(state.display)) {
+    state.display = rememberedDisplay() || state.displays[0] || null;
+  }
   state.wbPresets = data.wbPresets || {};
 
   el("dot").className = `dot ${data.connected ? "on" : "off"}`;
