@@ -281,3 +281,28 @@ async def test_each_display_is_addressable(service, camera_state):
     for display in ("HDMI", "FrontUSBC", "MainSDI"):
         assert (await deck(service, f"monitor/cleanFeed/on?display={display}")).text == "cleanFeed on"
         assert camera_state.state[f"/monitoring/{display}/cleanFeed"]["enabled"] is True
+
+
+# ------------------------------------------------------------------- caching
+
+async def test_page_assets_are_never_served_from_a_stale_cache(service):
+    """A cached app.js survives an upgrade and silently breaks the page.
+
+    Without a Cache-Control header a browser may reuse the old JavaScript
+    indefinitely: the page loads, buttons still fire, and nothing updates --
+    until someone thinks to hard refresh.
+    """
+    for path in ("/", "/static/app.js", "/static/style.css"):
+        response = await service.get(path)
+        assert response.status_code == 200, path
+        assert "no-cache" in response.headers.get("cache-control", ""), path
+
+
+async def test_asset_urls_carry_a_build_tag(service):
+    """Belt and braces: a changed asset gets a changed URL."""
+    html = (await service.get("/")).text
+    import re
+
+    tags = re.findall(r"/static/\w+\.\w+\?v=([0-9a-f]{12})", html)
+    assert len(tags) >= 2, html[:400]
+    assert len(set(tags)) == 1, "assets should share one build tag"

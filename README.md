@@ -53,6 +53,13 @@ safe to launch at boot and power the camera on afterwards.
 **Before anything works:** enable the web media manager under *network access* in
 Blackmagic Camera Setup. The REST API is served by that same service.
 
+## After pulling an update
+
+Restart the service and reload the page normally — no hard refresh needed. Page assets
+carry a build tag derived from their contents and are served `no-cache`, so a browser
+cannot keep running the JavaScript it cached before an upgrade. If you were bitten by
+this before the fix, one hard refresh clears the old copy for good.
+
 ## When a control is missing
 
 The service only shows what the camera answered for at startup. To see exactly what it
@@ -104,7 +111,7 @@ The web page shows only what your camera actually implements, discovered at star
 .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
 ```
 
-64 tests run the real service against the mock camera over real HTTP and websockets,
+66 tests run the real service against the mock camera over real HTTP and websockets,
 covering capability discovery, ladder stepping and clamping, read-back after write,
 error surfacing, the polling fallback, and live websocket updates. Three of them
 generate a self-signed certificate and repeat the connection over HTTPS and `wss://`,

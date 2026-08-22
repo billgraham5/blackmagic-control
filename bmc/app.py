@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import actions, ladders
@@ -134,13 +135,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(_api_router(supervisor))
 
     if WEB_ROOT.is_dir():
-        app.mount("/static", StaticFiles(directory=WEB_ROOT), name="static")
+        app.mount("/static", _RevalidatingStatics(directory=WEB_ROOT), name="static")
 
         @app.get("/", include_in_schema=False)
-        async def index() -> FileResponse:
-            return FileResponse(WEB_ROOT / "index.html")
+        async def index() -> HTMLResponse:
+            # Stamp the asset URLs with a build tag derived from the files
+            # themselves. Without it a browser is free to keep running the
+            # JavaScript it cached before the last upgrade -- the page looks
+            # current, the buttons still work, and nothing else does.
+            html = (WEB_ROOT / "index.html").read_text()
+            tag = _asset_tag()
+            html = html.replace("/static/app.js", f"/static/app.js?v={tag}")
+            html = html.replace("/static/style.css", f"/static/style.css?v={tag}")
+            return HTMLResponse(html, headers=_NO_CACHE)
 
     return app
+
+
+#: Local tool, iterated on constantly: correctness beats a saved round trip.
+_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
+class _RevalidatingStatics(StaticFiles):
+    """Static files that must be revalidated rather than reused blindly."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Any:
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(_NO_CACHE)
+        return response
+
+
+def _asset_tag() -> str:
+    """A short tag that changes whenever the page's assets change."""
+    digest = hashlib.sha256()
+    for name in sorted(("app.js", "style.css", "index.html")):
+        path = WEB_ROOT / name
+        if path.is_file():
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 # --------------------------------------------------------------------- deck

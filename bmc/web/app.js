@@ -494,11 +494,19 @@ async function loadState() {
   return data.connected;
 }
 
+/** When the last websocket message arrived, used to notice a silent stall. */
+let lastMessageAt = Date.now();
+
 function openSocket() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${scheme}://${location.host}/api/ws`);
 
+  socket.addEventListener("open", () => {
+    lastMessageAt = Date.now();
+  });
+
   socket.addEventListener("message", (event) => {
+    lastMessageAt = Date.now();
     const message = JSON.parse(event.data);
     if (message.type === "snapshot") {
       state.supported = new Set(message.supported || []);
@@ -525,12 +533,25 @@ async function waitForCamera() {
   setTimeout(waitForCamera, 3000);
 }
 
+/* Last line of defence. If updates stop arriving for any reason the page must
+ * not sit there showing stale values while looking perfectly healthy -- that is
+ * indistinguishable from the camera not responding. */
+function watchForStall() {
+  setInterval(async () => {
+    if (Date.now() - lastMessageAt < 10000) return;
+    await resync();
+    renderAll();
+    lastMessageAt = Date.now();
+  }, 5000);
+}
+
 async function main() {
   await loadState();
   buildChips();
   wireControls();
   renderAll();
   openSocket();
+  watchForStall();
   if (!state.supported.size) waitForCamera();
 }
 
