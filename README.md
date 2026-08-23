@@ -92,7 +92,21 @@ transport state over its websocket so the service has to fall back to polling:
 
 ## What it does
 
-The web page shows only what your camera actually implements, discovered at startup:
+Three pages:
+
+- **Control** — a curated layout for the things you reach for while shooting
+- **Status** — every value the camera exposes, grouped, filterable, marked `live` where
+  the camera pushes rather than the service polls
+- **Configure** — every setting the camera says can be written, rendered from its own
+  schema: enums as menus, numbers bounded by their documented range, booleans as toggles
+
+The endpoint list is not hardcoded. At startup the service reads the OpenAPI documents
+the camera serves at `/control/documentation.html`, unions them with the properties named
+by `/event/list`, expands templated paths against the displays and audio channels the
+camera reports, and probes the result. A built-in list is only a floor for firmware that
+serves no documentation.
+
+The Control page shows only what your camera actually implements:
 
 - **Exposure** — ISO with ladder stepping, shutter (speed or angle), white balance with
   presets and auto, tint, auto exposure
@@ -112,7 +126,7 @@ The web page shows only what your camera actually implements, discovered at star
 .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
 ```
 
-83 tests run the real service against the mock camera over real HTTP and websockets,
+97 tests run the real service against the mock camera over real HTTP and websockets,
 covering capability discovery, ladder stepping and clamping, read-back after write,
 error surfacing, the polling fallback, and live websocket updates. Three of them
 generate a self-signed certificate and repeat the connection over HTTPS and `wss://`,
@@ -123,6 +137,7 @@ which is how the camera is actually configured.
 | Path | What it is |
 | --- | --- |
 | `bmc/camera.py` | REST client, capability probe, websocket subscriber, state cache |
+| `bmc/discovery.py` | Reads the camera's own OpenAPI documents for paths and schemas |
 | `bmc/actions.py` | Semantic verbs (toggle, step, recall) built on absolute setters |
 | `bmc/ladders.py` | Discrete value ladders and stepping — pure, heavily tested |
 | `bmc/app.py` | FastAPI service: `/deck/*` plain text, `/api/*` JSON + websocket |

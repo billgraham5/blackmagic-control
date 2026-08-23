@@ -11,12 +11,14 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 from typing import Any, AsyncIterator, Iterable
 
 import httpx
 import websockets
 
 from .config import Settings
+from .discovery import Endpoint, expand_templates, fetch_specs
 
 log = logging.getLogger("bmc.camera")
 
@@ -159,11 +161,18 @@ class Camera:
         self._probe_results: dict[str, int | None] = {}
         self._event_list: Any = None
         self._displays: list[str] = []
+        self._endpoints: dict[str, Endpoint] = {}
+        self._root_client: httpx.AsyncClient | None = None
 
     # ---------------------------------------------------------------- lifecycle
 
     async def start(self) -> None:
         context = self.settings.ssl_context()
+        self._root_client = httpx.AsyncClient(
+            timeout=self.settings.request_timeout,
+            verify=context if context is not None else True,
+            trust_env=False,
+        )
         self._client = httpx.AsyncClient(
             base_url=self.settings.api_base,
             timeout=self.settings.request_timeout,
@@ -191,9 +200,10 @@ class Camera:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._tasks.clear()
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        for client in (self._client, self._root_client):
+            if client is not None:
+                await client.aclose()
+        self._client = self._root_client = None
 
     # ------------------------------------------------------------------- probe
 
@@ -220,7 +230,14 @@ class Camera:
                 "Camera Setup under 'network access'."
             )
 
-        candidates = list(dict.fromkeys(TRACKED + OPTIONAL))
+        # Ask the camera what it implements before assuming anything. The
+        # built-in list is only a floor -- firmware 9.6 serves endpoints that
+        # post-date every published spec dump.
+        self._endpoints = await self._fetch_documentation()
+        await self._discover_displays()
+        self._event_list = await self.get("/event/list")
+
+        candidates = self._candidate_paths()
         self._probe_results = {}
         reachable = False
 
@@ -242,14 +259,11 @@ class Camera:
                 "Camera Setup under 'network access'."
             )
 
-        await self._discover_displays()
-
         self._connected = True
         self._identity = self._state.get("/system") or self._state.get("/system/product") or {}
 
         # Which of the supported properties the camera will push to us. Older
         # firmware only pushes media/system/transport, so the rest must be polled.
-        self._event_list = await self.get("/event/list")
         available = _event_names(self._event_list)
         self._pushed = {p for p in self._supported if p in available}
         if self._supported and not self._pushed:
@@ -281,6 +295,53 @@ class Camera:
                 ", ".join(f"{p} -> {s or 'no response'}" for p, s in sorted(unexpected.items())),
             )
 
+    async def _fetch_documentation(self) -> dict[str, Endpoint]:
+        assert self._root_client is not None
+        root = f"{self.settings.camera_scheme}://{self.settings.camera_host}"
+        try:
+            return await fetch_specs(self._root_client, root)
+        except Exception as exc:  # noqa: BLE001 - discovery is best effort
+            log.debug("could not read camera documentation: %s", exc)
+            return {}
+
+    def _candidate_paths(self) -> list[str]:
+        """Everything worth probing, from every source we have.
+
+        Order matters only for readability of the log; duplicates are collapsed.
+        """
+        channels = self._audio_channels()
+        candidates: list[str] = []
+
+        for path in self._endpoints:
+            candidates.extend(expand_templates(path, self._displays, channels))
+
+        for name in sorted(_event_names(self._event_list)):
+            candidates.extend(expand_templates(name, self._displays, channels))
+
+        candidates.extend(TRACKED)
+        candidates.extend(OPTIONAL)
+        for display in self._displays:
+            candidates.extend(
+                f"/monitoring/{display}/{overlay}" for overlay in MONITORING_PER_DISPLAY
+            )
+
+        # Endpoints that take a name we would have to invent, and the websocket
+        # itself, are not readable state.
+        skip = {"/event/websocket", "/"}
+        return [
+            path
+            for path in dict.fromkeys(candidates)
+            if path.startswith("/") and "{" not in path and path not in skip
+        ]
+
+    def _audio_channels(self) -> list[int]:
+        reported = self._state.get("/audio/channels")
+        if isinstance(reported, dict):
+            for value in reported.values():
+                if isinstance(value, int) and 0 < value <= 16:
+                    return list(range(value))
+        return [0, 1]
+
     async def _discover_displays(self) -> None:
         """Find the monitoring outputs this body exposes.
 
@@ -289,7 +350,15 @@ class Camera:
         first; fall back to trying the usual names with one cheap endpoint each,
         then probe the full set only for displays that answered.
         """
-        listed = self._state.get("/monitoring/display")
+        # Fetched rather than read from the cache: display discovery now runs
+        # before the main sweep, because expanding /monitoring/{displayName}/...
+        # into real paths needs the names first.
+        status, listed = await self._probe_one("/monitoring/display")
+        self._probe_results["/monitoring/display"] = status
+        if status is not None and 200 <= status < 300:
+            self._supported.add("/monitoring/display")
+            if listed is not None:
+                self._state["/monitoring/display"] = listed
         names: list[str] = []
         if isinstance(listed, dict):
             for key in ("displays", "display", "names"):
@@ -358,6 +427,42 @@ class Camera:
             if status < 500:
                 return status, None
         return status, None
+
+    @property
+    def endpoints(self) -> dict[str, Endpoint]:
+        """What the camera's own documentation says about each path."""
+        return dict(self._endpoints)
+
+    def write_schema(self, path: str) -> dict[str, Any]:
+        """The fields a PUT to ``path`` accepts, if the camera documented them."""
+        endpoint = self._endpoints.get(path)
+        if endpoint is not None and endpoint.write_schema:
+            return endpoint.write_schema
+        # Templated paths keep their placeholder in the documentation.
+        for candidate, endpoint in self._endpoints.items():
+            if "{" not in candidate:
+                continue
+            pattern = re.escape(candidate)
+            pattern = re.sub(r"\\\{\w+\\\}", r"[^/]+", pattern)
+            if re.fullmatch(pattern, path) and endpoint.write_schema:
+                return endpoint.write_schema
+        return {}
+
+    @property
+    def has_documentation(self) -> bool:
+        """Whether the camera told us what it implements."""
+        return bool(self._endpoints)
+
+    def is_writable(self, path: str) -> bool:
+        endpoint = self._endpoints.get(path)
+        if endpoint is not None:
+            return endpoint.writable
+        if self.write_schema(path):
+            return True
+        # No documentation for this path. If the camera served none at all we
+        # have nothing better than the value's own shape; if it did, silence
+        # about this path means it is not something to write to.
+        return not self.has_documentation
 
     @property
     def event_list(self) -> Any:

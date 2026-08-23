@@ -152,6 +152,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
+def _infer_fields(value: Any) -> dict[str, Any]:
+    """Guess an editable shape from a value the camera is currently reporting.
+
+    Only used when the camera documents no PUT body. It cannot know about
+    enums or ranges, so it stays conservative: scalars only, no nesting.
+    """
+    if not isinstance(value, dict):
+        return {}
+    fields: dict[str, Any] = {}
+    for name, item in value.items():
+        if isinstance(item, bool):
+            fields[name] = {"type": "boolean"}
+        elif isinstance(item, (int, float)):
+            fields[name] = {"type": "number"}
+        elif isinstance(item, str):
+            fields[name] = {"type": "string"}
+    return fields
+
+
 #: Local tool, iterated on constantly: correctness beats a saved round trip.
 _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 
@@ -470,6 +489,29 @@ def _api_router(supervisor: Supervisor) -> APIRouter:
                 "than instantly.",
             ]
         return "\n".join(lines)
+
+    @router.get("/schema")
+    async def schema() -> dict[str, Any]:
+        """Every endpoint in use, what it holds, and what can be written to it.
+
+        Where the camera documented a PUT body we use its field types and
+        enums. Where it did not, the shape of the current value is the next
+        best thing -- a boolean is a toggle, a number is a number.
+        """
+        camera = supervisor.require()
+        described: dict[str, Any] = {}
+        for path in sorted(camera.supported):
+            fields = camera.write_schema(path)
+            if not fields and camera.is_writable(path):
+                fields = _infer_fields(camera.value(path))
+            endpoint = camera.endpoints.get(path)
+            described[path] = {
+                "summary": endpoint.summary if endpoint else "",
+                "writable": bool(fields),
+                "fields": fields,
+                "pushed": path in camera.pushed,
+            }
+        return described
 
     @router.get("/set/{control}", response_class=PlainTextResponse)
     async def set_control(control: str, v: float = Query(...)):

@@ -19,9 +19,15 @@
     <button class="rec hidden" id="record">REC</button>
   </header>
 
+  <nav class="tabs">
+    <button data-tab="control" class="on">Control</button>
+    <button data-tab="status">Status</button>
+    <button data-tab="configure">Configure</button>
+  </nav>
+
   <div class="banner" id="banner"></div>
 
-  <main>
+  <main id="tab-control">
     <section class="card hidden" id="card-exposure">
       <h2>Exposure</h2>
 
@@ -136,6 +142,24 @@
         <span class="sub" id="media-volume"></span>
       </div>
     </section>
+  </main>
+
+  <main id="tab-status" class="hidden">
+    <div class="row">
+      <input type="search" id="status-filter" class="filter" placeholder="Filter&hellip;"
+             autocomplete="off" aria-label="Filter status entries">
+      <span class="hint" id="status-count"></span>
+    </div>
+    <div id="status-groups"></div>
+  </main>
+
+  <main id="tab-configure" class="hidden">
+    <div class="row">
+      <input type="search" id="config-filter" class="filter" placeholder="Filter&hellip;"
+             autocomplete="off" aria-label="Filter settings">
+      <span class="hint" id="config-count"></span>
+    </div>
+    <div id="config-groups"></div>
   </main>
 
   <footer>

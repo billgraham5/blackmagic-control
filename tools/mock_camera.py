@@ -143,6 +143,13 @@ class MockCamera:
             "/monitoring/FrontUSBC/falseColor": {"enabled": False},
             "/monitoring/FrontUSBC/cleanFeed": {"enabled": False},
             "/event/list": {"events": PUSHED},
+            # Present only in the documentation below, never in the service's
+            # built-in list, so discovery is the only way to find them.
+            "/camera/id": {"id": "studio-left"},
+            "/media/slots": {"slots": [{"index": 0, "state": "Mounted"}]},
+            "/monitoring/MainSDI/brightness": {"brightness": 0.5},
+            "/monitoring/HDMI/brightness": {"brightness": 0.5},
+            "/monitoring/FrontUSBC/brightness": {"brightness": 0.5},
         }
         self.listeners: set[asyncio.Queue[str]] = set()
 
@@ -275,7 +282,70 @@ async def write(path: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
+DOCUMENTATION = """<!doctype html><html><body>
+<p>Camera Control REST API</p>
+<script>const specs = ["MockControl.yaml"];</script>
+</body></html>"""
+
+SPEC = """
+openapi: 3.0.1
+info: {title: Mock Control API, version: 1.0.0}
+servers: [{url: /control/api/v1}]
+paths:
+  /camera/id:
+    get: {summary: Get the camera identifier}
+    put:
+      summary: Set the camera identifier
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id: {type: string, description: Camera identifier}
+  /media/slots:
+    get: {summary: Get media slot status}
+  /monitoring/{displayName}/brightness:
+    get: {summary: Get display brightness}
+    put:
+      summary: Set display brightness
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                brightness: {type: number, minimum: 0.0, maximum: 1.0}
+  /video/autoExposure:
+    get: {summary: Get auto exposure mode}
+    put:
+      summary: Set auto exposure
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: object
+                  properties:
+                    mode: {type: string, enum: [Off, Continuous, OneShot]}
+                    type: {type: string, enum: ["", Iris, Shutter, "Iris,Shutter"]}
+"""
+
 app = FastAPI(title="Mock Blackmagic camera")
+
+
+@app.get("/control/documentation.html")
+async def documentation() -> Response:
+    return Response(DOCUMENTATION, media_type="text/html")
+
+
+@app.get("/control/MockControl.yaml")
+async def spec() -> Response:
+    return Response(SPEC, media_type="application/yaml")
+
+
 app.include_router(router)
 
 

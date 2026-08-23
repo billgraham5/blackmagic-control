@@ -43,6 +43,79 @@ header .spacer { flex: 1; }
 .dot.on { background: var(--ok); }
 .dot.off { background: var(--rec); }
 
+.tabs {
+  position: sticky;
+  top: 57px;
+  z-index: 9;
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 1rem;
+  background: rgba(19, 20, 23, 0.92);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.tabs button { background: none; border: 0; color: var(--muted); padding: 0.4rem 0.8rem; }
+.tabs button.on { color: var(--text); background: var(--panel-2); }
+
+.filter {
+  font: inherit;
+  flex: 1;
+  min-width: 8rem;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0.5rem 0.7rem;
+}
+.filter:focus { outline: none; border-color: var(--accent); }
+
+/* Status and configuration entries: one endpoint per line, path on the left. */
+.entry {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--line);
+}
+.entry:first-of-type { border-top: 0; }
+.entry .path {
+  flex: 1 1 15rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+.entry .readout {
+  flex: 1 1 12rem;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+.entry .fields { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+.entry .fields label { color: var(--muted); font-size: 0.8rem; }
+
+.entry input[type="text"],
+.entry input[type="number"],
+.entry select {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  min-height: 36px;
+  max-width: 10rem;
+}
+.entry input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); }
+
+.pill {
+  font-size: 0.7rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+}
+
 main { max-width: 780px; margin: 0 auto; padding: 1rem; display: grid; gap: 1rem; }
 
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; }

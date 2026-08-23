@@ -14,6 +14,18 @@ Derived from the OpenAPI specification served by an actual Micro Studio Camera 4
 >    firmware. Newer releases add endpoints. Run `scripts/probe-camera.sh` for ground truth
 >    on your unit.
 
+## Not in the REST API at all
+
+**Dynamic range** (Film / Extended Video / Video), and the rest of what Blackmagic calls
+video mode, has no REST endpoint. It is absent from the manual and from the 110
+subscribable properties a firmware 9.6.2 Micro Studio 4K G2 reports. It is reachable over
+the SDI/Bluetooth Camera Control Protocol, which is a different protocol documented in
+the *Blackmagic Camera Control Manual*, not this one.
+
+The same goes for anything else you cannot find below: the way to settle it for your body
+and firmware is `GET /control/documentation.html`, which serves the camera's own OpenAPI
+documents, and `GET /control/api/v1/event/list`.
+
 ## Connecting
 
 | Item | Value |

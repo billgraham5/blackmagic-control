@@ -38,6 +38,8 @@ const state = {
   presets: [],
   overlays: [],
   displays: [],
+  schema: {},
+  tab: "control",
   /** Aperture as an f-number plus the lens's range, both from the service. */
   iris: { fstop: null, range: null },
   /** Which monitoring output the overlay buttons act on. */
@@ -49,9 +51,18 @@ const state = {
 
 /* ----------------------------------------------------------------- sending */
 
-async function send(url) {
+async function send(url, body) {
   try {
-    const response = await fetch(url);
+    const response = await fetch(
+      url,
+      body === undefined
+        ? undefined
+        : {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+    );
     const text = (await response.text()).trim();
     if (!response.ok) {
       showError(text || `${response.status} ${response.statusText}`);
@@ -392,6 +403,8 @@ function renderAll() {
   renderPresets();
   renderMedia();
   renderStatusLine();
+  if (state.tab === "status") renderStatus();
+  if (state.tab === "configure") renderConfigure();
 }
 
 /* ------------------------------------------------------------------- wiring */
@@ -446,7 +459,24 @@ async function setFstop(fnumber) {
   renderIris();
 }
 
+function selectTab(name) {
+  state.tab = name;
+  ["control", "status", "configure"].forEach((tab) => {
+    show(`tab-${tab}`, tab === name);
+  });
+  document.querySelectorAll("[data-tab]").forEach((button) => {
+    button.classList.toggle("on", button.dataset.tab === name);
+  });
+  renderAll();
+}
+
 function wireControls() {
+  document.querySelectorAll("[data-tab]").forEach((button) => {
+    button.addEventListener("click", () => selectTab(button.dataset.tab));
+  });
+  el("status-filter").addEventListener("input", renderStatus);
+  el("config-filter").addEventListener("input", renderConfigure);
+
   const iris = el("iris-fstop");
   iris.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -516,6 +546,15 @@ async function refreshIris() {
   }
 }
 
+/** The writable shape of every endpoint, as the camera describes it. */
+async function loadSchema() {
+  try {
+    state.schema = await (await fetch("/api/schema")).json();
+  } catch {
+    state.schema = {};
+  }
+}
+
 /** Pull current state from the service, replacing what we hold. */
 async function resync() {
   try {
@@ -527,6 +566,198 @@ async function resync() {
   } catch {
     /* leave what we have; the websocket will correct us */
   }
+}
+
+/* ------------------------------------------------- status and configuration */
+
+/** Group by the first path segment: /video/..., /lens/..., /monitoring/... */
+function groupByPrefix(paths) {
+  const groups = new Map();
+  paths.forEach((path) => {
+    const prefix = path.split("/")[1] || "other";
+    if (!groups.has(prefix)) groups.set(prefix, []);
+    groups.get(prefix).push(path);
+  });
+  return groups;
+}
+
+/** Render a camera value compactly: {"iso":400} reads as "iso 400". */
+function readout(value) {
+  if (value === undefined || value === null) return "\u2014";
+  if (typeof value !== "object") return String(value);
+  if (Array.isArray(value)) {
+    return value.length ? value.map(readout).join(", ") : "(empty)";
+  }
+  const parts = Object.entries(value).map(([key, item]) => {
+    const rendered =
+      item !== null && typeof item === "object" ? JSON.stringify(item) : String(item);
+    return `${key} ${rendered}`;
+  });
+  return parts.join("   ") || "(no value)";
+}
+
+function card(title) {
+  const section = document.createElement("section");
+  section.className = "card";
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  section.append(heading);
+  return section;
+}
+
+function renderStatus() {
+  const filter = el("status-filter").value.trim().toLowerCase();
+  const paths = [...state.supported].filter((p) => p.toLowerCase().includes(filter)).sort();
+  const container = el("status-groups");
+  container.textContent = "";
+
+  groupByPrefix(paths).forEach((group, prefix) => {
+    const section = card(prefix);
+    group.forEach((path) => {
+      const entry = document.createElement("div");
+      entry.className = "entry";
+
+      const name = document.createElement("span");
+      name.className = "path";
+      name.textContent = path;
+
+      const value = document.createElement("span");
+      value.className = "readout";
+      value.textContent = readout(state.values[path]);
+
+      entry.append(name, value);
+      if (state.schema[path]?.pushed) {
+        const pill = document.createElement("span");
+        pill.className = "pill";
+        pill.textContent = "live";
+        pill.title = "Pushed by the camera rather than polled";
+        entry.append(pill);
+      }
+      section.append(entry);
+    });
+    container.append(section);
+  });
+
+  el("status-count").textContent = `${paths.length} of ${state.supported.size}`;
+}
+
+/** One input for one documented field, returning its current value on demand. */
+function fieldInput(spec, current) {
+  let input;
+  if (spec.enum) {
+    input = document.createElement("select");
+    spec.enum.forEach((option) => {
+      const item = document.createElement("option");
+      item.value = String(option);
+      item.textContent = option === "" ? "(none)" : String(option);
+      input.append(item);
+    });
+    if (current !== undefined) input.value = String(current);
+    input.read = () => input.value;
+  } else if (spec.type === "boolean") {
+    input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(current);
+    input.read = () => input.checked;
+  } else if (spec.type === "number" || spec.type === "integer") {
+    input = document.createElement("input");
+    input.type = "number";
+    input.step = spec.type === "integer" ? "1" : "any";
+    if (spec.minimum !== undefined) input.min = spec.minimum;
+    if (spec.maximum !== undefined) input.max = spec.maximum;
+    if (current !== undefined) input.value = current;
+    input.read = () => (input.value === "" ? undefined : Number(input.value));
+  } else {
+    input = document.createElement("input");
+    input.type = "text";
+    if (current !== undefined) input.value = current;
+    input.read = () => (input.value === "" ? undefined : input.value);
+  }
+  if (spec.description) input.title = spec.description;
+  return input;
+}
+
+function renderConfigure() {
+  const filter = el("config-filter").value.trim().toLowerCase();
+  const paths = Object.keys(state.schema)
+    .filter((p) => state.schema[p].writable && p.toLowerCase().includes(filter))
+    .sort();
+  const container = el("config-groups");
+  container.textContent = "";
+
+  groupByPrefix(paths).forEach((group, prefix) => {
+    const section = card(prefix);
+    group.forEach((path) => {
+      const spec = state.schema[path];
+      const current = state.values[path];
+      const entry = document.createElement("div");
+      entry.className = "entry";
+
+      const name = document.createElement("span");
+      name.className = "path";
+      name.textContent = path;
+      if (spec.summary) name.title = spec.summary;
+
+      const fields = document.createElement("span");
+      fields.className = "fields";
+      const inputs = new Map();
+
+      Object.entries(spec.fields).forEach(([key, definition]) => {
+        // A nested object is one level deep at most in this API.
+        const nested = definition.properties;
+        const source =
+          current && typeof current === "object" ? current[key] : undefined;
+        if (nested) {
+          Object.entries(nested).forEach(([innerKey, innerSpec]) => {
+            const label = document.createElement("label");
+            label.textContent = `${key}.${innerKey}`;
+            const input = fieldInput(
+              innerSpec,
+              source && typeof source === "object" ? source[innerKey] : undefined
+            );
+            inputs.set(`${key}.${innerKey}`, input);
+            fields.append(label, input);
+          });
+          return;
+        }
+        if (Object.keys(spec.fields).length > 1 || key !== "") {
+          const label = document.createElement("label");
+          label.textContent = key || "value";
+          fields.append(label);
+        }
+        const input = fieldInput(definition, source);
+        inputs.set(key, input);
+        fields.append(input);
+      });
+
+      const apply = document.createElement("button");
+      apply.textContent = "Set";
+      apply.addEventListener("click", async () => {
+        const body = {};
+        inputs.forEach((input, key) => {
+          const value = input.read();
+          if (value === undefined) return;
+          if (key.includes(".")) {
+            const [outer, inner] = key.split(".");
+            body[outer] = body[outer] || {};
+            body[outer][inner] = value;
+          } else {
+            body[key] = value;
+          }
+        });
+        await send("/api/raw", { path, body });
+        await resync();
+        renderAll();
+      });
+      fields.append(apply);
+
+      entry.append(name, fields);
+      section.append(entry);
+    });
+    container.append(section);
+  });
+
+  el("config-count").textContent = `${paths.length} settable`;
 }
 
 /* -------------------------------------------------------------- connection */
@@ -599,6 +830,7 @@ function openSocket() {
 /** Re-read capabilities until the camera turns up, then stop asking. */
 async function waitForCamera() {
   if (await loadState()) {
+    await loadSchema();
     buildChips();
     renderAll();
     return;
@@ -620,6 +852,7 @@ function watchForStall() {
 
 async function main() {
   await loadState();
+  await loadSchema();
   buildChips();
   wireControls();
   renderAll();

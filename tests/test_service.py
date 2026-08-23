@@ -355,3 +355,51 @@ async def test_iris_can_still_be_set_normalised(service):
     """The normalised path stays, for the nudge endpoints and any lens without
     an aperture description."""
     assert (await service.get("/api/set/iris?v=0.25")).status_code == 200
+
+
+# --------------------------------------------------- discovery and schema
+
+async def test_endpoints_are_found_from_the_cameras_own_documentation(service):
+    """These exist only in the camera's OpenAPI, not in any built-in list."""
+    supported = set((await service.get("/api/state")).json()["supported"])
+    assert "/camera/id" in supported
+    assert "/media/slots" in supported
+    # A templated path, expanded against the displays the camera reported.
+    assert "/monitoring/MainSDI/brightness" in supported
+    assert "/monitoring/FrontUSBC/brightness" in supported
+
+
+async def test_schema_describes_what_can_be_written(service):
+    schema = (await service.get("/api/schema")).json()
+
+    brightness = schema["/monitoring/MainSDI/brightness"]
+    assert brightness["writable"]
+    assert brightness["fields"]["brightness"] == {
+        "type": "number", "minimum": 0.0, "maximum": 1.0,
+    }
+
+    # Nested objects and their enums survive, Off included.
+    mode = schema["/video/autoExposure"]["fields"]["mode"]["properties"]["mode"]
+    assert mode["enum"] == ["Off", "Continuous", "OneShot"]
+
+
+async def test_read_only_endpoints_are_not_offered_as_settings(service):
+    """The camera documents /media/slots as GET only."""
+    schema = (await service.get("/api/schema")).json()
+    assert schema["/media/slots"]["writable"] is False
+    assert schema["/media/slots"]["fields"] == {}
+
+
+async def test_schema_marks_which_values_the_camera_pushes(service):
+    schema = (await service.get("/api/schema")).json()
+    assert schema["/transports/0/record"]["pushed"] is True
+    assert schema["/video/iso"]["pushed"] is False
+
+
+async def test_anything_discovered_can_be_written_through_the_passthrough(service):
+    response = await service.post(
+        "/api/raw", json={"path": "/camera/id", "body": {"id": "studio-left-2"}}
+    )
+    assert response.status_code == 200
+    state = (await service.get("/api/state")).json()["state"]
+    assert state["/camera/id"] == {"id": "studio-left-2"}
