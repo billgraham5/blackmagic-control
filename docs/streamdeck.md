@@ -70,6 +70,7 @@ Active MFT lenses only.
 
 | URL | Notes |
 | --- | --- |
+| `/deck/iris/fstop/2.8` | Set aperture by f-number, clamped to the lens's range |
 | `/deck/iris/open` · `/deck/iris/close` | ±5%, or `?by=2` |
 | `/deck/focus/auto` | One-shot autofocus |
 

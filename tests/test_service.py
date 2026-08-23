@@ -306,3 +306,52 @@ async def test_asset_urls_carry_a_build_tag(service):
     tags = re.findall(r"/static/\w+\.\w+\?v=([0-9a-f]{12})", html)
     assert len(tags) >= 2, html[:400]
     assert len(set(tags)) == 1, "assets should share one build tag"
+
+
+# ------------------------------------------------------------------- iris
+
+async def test_iris_is_set_by_f_number(service, camera_state):
+    """f/8 is APEX 6.0 on the wire; sending 8 straight through would be f/16."""
+    assert (await deck(service, "iris/fstop/8")).text == "f/8"
+    assert round(camera_state.state["/lens/iris"]["apertureStop"], 2) == 6.0
+
+    assert (await deck(service, "iris/fstop/2.8")).text == "f/2.8"
+    assert round(camera_state.state["/lens/iris"]["apertureStop"], 2) == 2.97
+
+
+async def test_iris_uses_aperture_stop_not_the_integer_ordinal(service, camera_state):
+    """apertureNumber is an integer index into the lens's steps, not an f-number."""
+    await deck(service, "iris/fstop/5.6")
+    assert camera_state.state["/lens/iris"]["apertureNumber"] == 8  # untouched
+    assert round(camera_state.state["/lens/iris"]["apertureStop"], 2) == 4.97
+
+
+async def test_iris_is_clamped_to_what_the_lens_can_do(service):
+    """A 12-35mm f/2.8 cannot be asked for f/1.4 or f/32."""
+    assert (await deck(service, "iris/fstop/1.4")).text == "f/2.8"
+    assert (await deck(service, "iris/fstop/32")).text == "f/16"
+
+
+async def test_iris_range_is_reported_as_f_numbers(service):
+    iris = (await service.get("/api/state")).json()["iris"]
+    low, high = iris["range"]
+    assert round(low, 1) == 2.8
+    assert round(high, 1) == 16.0
+
+
+async def test_iris_reports_the_f_number_the_lens_actually_holds(service):
+    await deck(service, "iris/fstop/11")
+    iris = (await service.get("/api/state")).json()["iris"]
+    assert round(iris["fstop"], 1) == 11.0
+
+
+async def test_a_nonsense_f_number_is_rejected(service):
+    response = await deck(service, "iris/fstop/0")
+    assert response.status_code == 400
+    assert "greater than zero" in response.text
+
+
+async def test_iris_can_still_be_set_normalised(service):
+    """The normalised path stays, for the nudge endpoints and any lens without
+    an aperture description."""
+    assert (await service.get("/api/set/iris?v=0.25")).status_code == 200

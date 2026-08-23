@@ -96,7 +96,8 @@ The web page shows only what your camera actually implements, discovered at star
 
 - **Exposure** — ISO with ladder stepping, shutter (speed or angle), white balance with
   presets and auto, tint, auto exposure
-- **Lens** — iris, focus, zoom, one-shot autofocus (active MFT lenses only)
+- **Lens** — iris as a typed f-number bounded by the lens's own range, focus, zoom,
+  one-shot autofocus (active MFT lenses only)
 - **Colour** — saturation, with a passthrough for the rest of the DaVinci-style primaries
 - **Presets** — recall and save whole camera states
 - **Record** — toggle with live state, optional clip naming
@@ -111,7 +112,7 @@ The web page shows only what your camera actually implements, discovered at star
 .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
 ```
 
-66 tests run the real service against the mock camera over real HTTP and websockets,
+83 tests run the real service against the mock camera over real HTTP and websockets,
 covering capability discovery, ladder stepping and clamping, read-back after write,
 error surfacing, the polling fallback, and live websocket updates. Three of them
 generate a self-signed certificate and repeat the connection over HTTPS and `wss://`,

@@ -115,11 +115,23 @@ Passive or fully manual lenses will not respond. All positional values are norma
 ### Iris — `GET|PUT /lens/iris`
 ```json
 {"normalised": 0.5}
-{"apertureStop": 4.0}
-{"apertureNumber": 4.0}
+{"apertureStop": 6.0}
+{"apertureNumber": 8}
 ```
 `GET` also returns `continuousApertureAutoExposure`. On `PUT` send one; priority is
 `apertureStop` > `normalised` > `apertureNumber`.
+
+**`apertureStop` is an APEX value, not an f-number**: `f = sqrt(2**stop)`, so APEX 6.0 is
+f/8 and APEX 8.0 is f/16. The two coincide at f/4, which makes treating the raw value as
+an f-number look correct until you open or close a stop.
+
+**`apertureNumber` is an integer** — an ordinal index into the lens's own aperture steps,
+not an f-number. It cannot express f/2.8. Use `apertureStop` for real values.
+
+`GET /lens/iris/description` gives `controllable` and `apertureStop.min` / `.max`, which
+is the lens's actual range — worth reading before offering the user a value to set. The
+manual does not state the units of those bounds, but magnitude settles it: a real lens
+tops out near APEX 8 (f/16) or states f/16–f/22 directly, and nothing sits in both ranges.
 
 ### Zoom — `GET|PUT /lens/zoom`
 ```json

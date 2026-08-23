@@ -51,3 +51,41 @@ def test_normalised_nudge_clamps_to_the_unit_range():
 def test_shutter_angle_is_rendered_from_hundredths_of_a_degree():
     assert ladders.describe_shutter_angle(18000) == "180deg"
     assert ladders.describe_shutter_angle(17280) == "172.8deg"
+
+
+# ---------------------------------------------------------------- aperture
+
+@pytest.mark.parametrize(
+    ("fnumber", "apex"),
+    [(2.0, 2.0), (2.8, 2.97), (4.0, 4.0), (5.6, 4.97), (8.0, 6.0), (16.0, 8.0)],
+)
+def test_fnumber_and_apex_convert_both_ways(fnumber, apex):
+    """Blackmagic reports aperture as an APEX value, where f = sqrt(2**stop)."""
+    assert round(ladders.fnumber_to_aperture_stop(fnumber), 2) == apex
+    assert round(ladders.aperture_stop_to_fnumber(apex), 1) == round(fnumber, 1)
+
+
+def test_apex_and_fnumber_only_coincide_at_f4():
+    """Which is why treating the raw stop as an f-number looks right at first."""
+    assert ladders.aperture_stop_to_fnumber(4.0) == 4.0
+    assert ladders.aperture_stop_to_fnumber(6.0) == 8.0  # not f/6
+    assert ladders.aperture_stop_to_fnumber(2.0) == 2.0
+
+
+def test_fnumber_must_be_positive():
+    with pytest.raises(ValueError):
+        ladders.fnumber_to_aperture_stop(0)
+
+
+def test_fnumbers_render_like_a_lens_barrel():
+    assert ladders.format_fnumber(2.8284) == "f/2.8"
+    assert ladders.format_fnumber(4.0) == "f/4"
+    assert ladders.format_fnumber(11.03) == "f/11"
+
+
+def test_aperture_units_are_told_apart_by_magnitude():
+    """Real lenses top out near APEX 8, or near f/16-f/22 stated directly."""
+    assert ladders.looks_like_apex(8.0) is True
+    assert ladders.looks_like_apex(9.0) is True
+    assert ladders.looks_like_apex(16.0) is False
+    assert ladders.looks_like_apex(22.0) is False

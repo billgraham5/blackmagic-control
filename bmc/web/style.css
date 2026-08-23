@@ -93,6 +93,42 @@ input[type="range"] {
   height: 34px;
 }
 
+/* Aperture is typed as a number, with the f/ prefix rendered as part of the
+   field so the value reads the way it does on a lens barrel. */
+.fstop-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 0.6rem;
+  min-height: 40px;
+}
+.fstop-field:focus-within { border-color: var(--accent); }
+.fstop-prefix { color: var(--muted); font-weight: 600; }
+
+.fstop-field input {
+  font: inherit;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: none;
+  border: 0;
+  outline: none;
+  width: 3.6rem;
+  padding: 0.5rem 0;
+}
+/* Keep the spinners: they step the aperture, which is genuinely useful. */
+.fstop-field input::-webkit-inner-spin-button { opacity: 1; }
+
+.hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .chips { display: flex; gap: 0.45rem; flex-wrap: wrap; }
 .chips button { padding: 0.45rem 0.7rem; font-size: 0.86rem; }
 

@@ -75,8 +75,13 @@
 
       <div class="row" id="row-iris">
         <span class="label">Iris</span>
-        <span class="value" id="iris-value">&mdash;</span>
-        <input type="range" id="iris-slider" min="0" max="1" step="0.01" data-control="iris">
+        <span class="fstop-field">
+          <span class="fstop-prefix">f/</span>
+          <input type="number" id="iris-fstop" step="0.1" min="1" max="22"
+                 inputmode="decimal" autocomplete="off" aria-label="Aperture, f-number">
+        </span>
+        <span class="chips" id="iris-chips"></span>
+        <span class="hint" id="iris-range"></span>
       </div>
 
       <div class="row" id="row-focus">

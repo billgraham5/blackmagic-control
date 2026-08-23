@@ -84,9 +84,15 @@ class MockCamera:
             "/video/whiteBalance": {"whiteBalance": 5600},
             "/video/whiteBalanceTint": {"whiteBalanceTint": 0},
             "/video/autoExposure": {"mode": {"mode": "Off", "type": ""}},
+            # apertureStop is an APEX value: 4.0 is f/4, 6.0 is f/8.
             "/lens/iris": {
                 "continuousApertureAutoExposure": False,
-                "apertureStop": 4.0, "normalised": 0.5, "apertureNumber": 4.0,
+                "apertureStop": 4.0, "normalised": 0.5, "apertureNumber": 8,
+            },
+            # A 12-35mm f/2.8: APEX 2.97 to 8.0, i.e. f/2.8 to f/16.
+            "/lens/iris/description": {
+                "controllable": True,
+                "apertureStop": {"min": 2.97, "max": 8.0},
             },
             "/lens/zoom": {"focalLength": 24, "normalised": 0.0},
             "/lens/focus": {"focus": 0.5},

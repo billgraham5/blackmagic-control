@@ -6,6 +6,7 @@
  */
 
 const ISO_CHIPS = [200, 400, 800, 1600, 3200, 6400];
+const FSTOP_CHIPS = [2.8, 4, 5.6, 8, 11];
 
 /* How each slider renders its own value, so the number under your finger
  * updates as you drag instead of waiting for the camera to answer. */
@@ -25,7 +26,6 @@ const OVERLAY_NAMES = {
 const SLIDERS = {
   wb: { label: "wb-value", format: (v) => `${Math.round(v)}K` },
   tint: { label: "tint-value", format: (v) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`) },
-  iris: { label: "iris-value", format: (v) => `${Math.round(v * 100)}%` },
   focus: { label: "focus-value", format: (v) => `${Math.round(v * 100)}%` },
   zoom: { label: "zoom-value", format: (v) => `${Math.round(v * 100)}%` },
   saturation: { label: "saturation-value", format: (v) => Number(v).toFixed(2) },
@@ -38,6 +38,8 @@ const state = {
   presets: [],
   overlays: [],
   displays: [],
+  /** Aperture as an f-number plus the lens's range, both from the service. */
+  iris: { fstop: null, range: null },
   /** Which monitoring output the overlay buttons act on. */
   display: null,
   wbPresets: {},
@@ -172,16 +174,37 @@ function renderExposure() {
   showCardIfAnyRowVisible("card-exposure");
 }
 
-function renderLens() {
-  const iris = state.values["/lens/iris"] || {};
-  if (!state.dragging.has("iris")) {
-    if (iris.apertureStop) {
-      el("iris-value").textContent = `f/${iris.apertureStop}`;
-    } else if (iris.normalised !== undefined) {
-      el("iris-value").textContent = `${Math.round(iris.normalised * 100)}%`;
-    }
-    if (iris.normalised !== undefined) el("iris-slider").value = iris.normalised;
+/** Round to one decimal, so f/2.8284 shows as the f/2.8 people expect. */
+function tidyFstop(fnumber) {
+  return Math.round(fnumber * 10) / 10;
+}
+
+function renderIris() {
+  const field = el("iris-fstop");
+  // Never overwrite a value being typed.
+  if (document.activeElement === field) return;
+
+  const fstop = state.iris.fstop;
+  if (typeof fstop === "number") {
+    field.value = tidyFstop(fstop);
+  } else {
+    field.value = "";
   }
+
+  const range = state.iris.range;
+  if (Array.isArray(range)) {
+    field.min = tidyFstop(range[0]);
+    field.max = tidyFstop(range[1]);
+    el("iris-range").textContent = `f/${tidyFstop(range[0])}\u2013f/${tidyFstop(range[1])}`;
+  } else {
+    el("iris-range").textContent = "";
+  }
+
+  markActive("[data-fstop]", "fstop", field.value);
+}
+
+function renderLens() {
+  renderIris();
   show("row-iris", supports("/lens/iris"));
 
   const focus = value("/lens/focus", "focus");
@@ -384,6 +407,16 @@ function buildChips() {
     isoChips.append(button);
   });
 
+  const irisChips = el("iris-chips");
+  irisChips.textContent = "";
+  FSTOP_CHIPS.forEach((fstop) => {
+    const button = document.createElement("button");
+    button.textContent = `f/${fstop}`;
+    button.dataset.fstop = fstop;
+    button.addEventListener("click", () => setFstop(fstop));
+    irisChips.append(button);
+  });
+
   const wbChips = el("wb-chips");
   wbChips.textContent = "";
   Object.entries(state.wbPresets)
@@ -398,7 +431,32 @@ function buildChips() {
     });
 }
 
+/** Send a typed aperture and show back whatever the lens actually took. */
+async function setFstop(fnumber) {
+  const value = Number(fnumber);
+  if (!Number.isFinite(value) || value <= 0) {
+    await refreshIris();
+    renderIris();
+    return;
+  }
+  await send(`/api/set/fstop?v=${value}`);
+  // The lens snaps to its own steps, so the number typed is rarely the number
+  // set. Read back rather than leave a value the camera never took on screen.
+  await refreshIris();
+  renderIris();
+}
+
 function wireControls() {
+  const iris = el("iris-fstop");
+  iris.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      iris.blur(); // commits via the blur handler below
+    }
+  });
+  iris.addEventListener("change", () => setFstop(iris.value));
+  iris.addEventListener("blur", () => setFstop(iris.value));
+
   document.querySelectorAll("[data-deck]").forEach((button) => {
     button.addEventListener("click", () => send(button.dataset.deck));
   });
@@ -448,6 +506,16 @@ function wireControls() {
   });
 }
 
+/** The f-number conversion lives on the service, so ask it rather than guess. */
+async function refreshIris() {
+  try {
+    const data = await (await fetch("/api/state")).json();
+    state.iris = data.iris || state.iris;
+  } catch {
+    /* keep what we have */
+  }
+}
+
 /** Pull current state from the service, replacing what we hold. */
 async function resync() {
   try {
@@ -455,6 +523,7 @@ async function resync() {
     const data = await response.json();
     state.values = data.state || {};
     state.supported = new Set(data.supported || []);
+    state.iris = data.iris || state.iris;
   } catch {
     /* leave what we have; the websocket will correct us */
   }
@@ -471,6 +540,7 @@ async function loadState() {
   state.presets = data.presets || [];
   state.overlays = data.overlays || [];
   state.displays = data.displays || [];
+  state.iris = data.iris || { fstop: null, range: null };
   if (!state.displays.includes(state.display)) {
     state.display = rememberedDisplay() || state.displays[0] || null;
   }
@@ -513,6 +583,9 @@ function openSocket() {
       state.values = message.state || {};
     } else if (message.type === "state") {
       state.values[message.property] = message.value;
+    }
+    if (message.type === "snapshot" || message.property === "/lens/iris") {
+      refreshIris();
     }
     renderAll();
   });

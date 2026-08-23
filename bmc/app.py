@@ -291,6 +291,12 @@ def _deck_router(supervisor: Supervisor) -> APIRouter:
         return await _text(lambda: actions.tint_set(camera, value))
 
     # ---- lens
+    @router.get("/iris/fstop/{value}", response_class=PlainTextResponse)
+    async def iris_fstop(value: float):
+        """Set aperture by f-number: /deck/iris/fstop/2.8"""
+        camera = supervisor.require()
+        return await _text(lambda: actions.iris_set_fstop(camera, value))
+
     @router.get("/iris/open", response_class=PlainTextResponse)
     async def iris_open(by: float = 5.0):
         camera = supervisor.require()
@@ -391,6 +397,10 @@ def _api_router(supervisor: Supervisor) -> APIRouter:
             "supported": sorted(camera.supported),
             "pushed": sorted(camera.pushed),
             "displays": camera.displays,
+            "iris": {
+                "fstop": actions.iris_fstop(camera),
+                "range": actions.iris_fstop_range(camera),
+            },
             "overlays": sorted(
                 path for path in camera.supported
                 if path.startswith("/monitoring/") or path == "/camera/colorBars"
@@ -471,6 +481,7 @@ def _api_router(supervisor: Supervisor) -> APIRouter:
             "wb": lambda: actions.wb_set(camera, int(v)),
             "tint": lambda: actions.tint_set(camera, int(v)),
             "iris": lambda: actions.iris_set(camera, v),
+            "fstop": lambda: actions.iris_set_fstop(camera, v),
             "focus": lambda: actions.focus_set(camera, v),
             "zoom": lambda: actions.zoom_set(camera, v),
             "saturation": lambda: actions.saturation_set(camera, v),

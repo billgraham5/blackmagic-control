@@ -215,10 +215,75 @@ async def iris_nudge(camera: Camera, delta_percent: float) -> str:
     return await iris_set(camera, ladders.step_normalised(current, delta_percent))
 
 
-def iris_summary(camera: Camera) -> str:
+def _aperture_is_apex(camera: Camera) -> bool:
+    """Whether this lens reports aperture as APEX values or plain f-numbers."""
+    limits = _iris_limits(camera)
+    return ladders.looks_like_apex(limits[1]) if limits else True
+
+
+def _iris_limits(camera: Camera) -> tuple[float, float] | None:
+    """The lens's aperture range, in whatever units it reports."""
+    description = camera.value("/lens/iris/description")
+    if not isinstance(description, dict):
+        return None
+    span = description.get("apertureStop")
+    if not isinstance(span, dict):
+        return None
+    low, high = span.get("min"), span.get("max")
+    if isinstance(low, (int, float)) and isinstance(high, (int, float)) and high > low:
+        return float(low), float(high)
+    return None
+
+
+def iris_fstop(camera: Camera) -> float | None:
+    """Current aperture as an f-number, or None if the lens does not report one."""
     value = camera.value("/lens/iris")
-    if isinstance(value, dict) and isinstance(value.get("apertureStop"), (int, float)):
-        return f"f/{value['apertureStop']:g}"
+    if not isinstance(value, dict):
+        return None
+    stop = value.get("apertureStop")
+    if not isinstance(stop, (int, float)):
+        return None
+    return ladders.aperture_stop_to_fnumber(float(stop)) if _aperture_is_apex(camera) else float(stop)
+
+
+def iris_fstop_range(camera: Camera) -> tuple[float, float] | None:
+    """The lens's aperture range as f-numbers, for bounding an input field."""
+    limits = _iris_limits(camera)
+    if limits is None:
+        return None
+    low, high = limits
+    if ladders.looks_like_apex(high):
+        return ladders.aperture_stop_to_fnumber(low), ladders.aperture_stop_to_fnumber(high)
+    return low, high
+
+
+async def iris_set_fstop(camera: Camera, fnumber: float) -> str:
+    """Set the aperture from a typed f-number.
+
+    Sent as ``apertureStop`` because that is the field the API takes a real
+    value in -- ``apertureNumber`` is an integer ordinal into the lens's own
+    steps, not an f-number.
+    """
+    _require(camera, "/lens/iris")
+    if fnumber <= 0:
+        raise CameraError("f-number must be greater than zero")
+
+    limits = iris_fstop_range(camera)
+    if limits:
+        fnumber = ladders.clamp(fnumber, limits[0], limits[1])
+
+    if _aperture_is_apex(camera):
+        payload = ladders.fnumber_to_aperture_stop(fnumber)
+    else:
+        payload = fnumber
+    await camera.put("/lens/iris", {"apertureStop": round(payload, 4)})
+    return iris_summary(camera)
+
+
+def iris_summary(camera: Camera) -> str:
+    fnumber = iris_fstop(camera)
+    if fnumber is not None:
+        return ladders.format_fnumber(fnumber)
     return f"iris {_normalised(camera, '/lens/iris', 'normalised') * 100:.0f}%"
 
 

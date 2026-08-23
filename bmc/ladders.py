@@ -98,6 +98,51 @@ def step_normalised(value: float, delta_percent: float) -> float:
     return round(clamp(value + delta_percent / 100.0, 0.0, 1.0), 4)
 
 
+#: The familiar full-stop series, for snapping a typed f-number to something sane.
+FSTOP_SERIES: tuple[float, ...] = (
+    1.0, 1.2, 1.4, 1.7, 2.0, 2.4, 2.8, 3.5, 4.0, 4.8,
+    5.6, 6.7, 8.0, 9.5, 11.0, 13.0, 16.0, 19.0, 22.0,
+)
+
+
+def fnumber_to_aperture_stop(fnumber: float) -> float:
+    """f/4 -> 4.0, f/8 -> 6.0.
+
+    Blackmagic expresses aperture as an APEX value, where the f-number is
+    ``sqrt(2**stop)``. The two coincide at f/4, which makes a naive
+    implementation look correct right up until you open or close a stop.
+    """
+    from math import log2
+
+    if fnumber <= 0:
+        raise ValueError("f-number must be positive")
+    return 2.0 * log2(fnumber)
+
+
+def aperture_stop_to_fnumber(stop: float) -> float:
+    """The inverse: APEX 6.0 -> f/8."""
+    return 2.0 ** (stop / 2.0)
+
+
+def format_fnumber(fnumber: float) -> str:
+    """Render an f-number the way a lens barrel does: f/2.8, f/4, f/5.6."""
+    if fnumber >= 10:
+        return f"f/{fnumber:.0f}"
+    text = f"{fnumber:.1f}".rstrip("0").rstrip(".")
+    return f"f/{text}"
+
+
+def looks_like_apex(maximum: float) -> bool:
+    """Decide whether a reported aperture range is APEX values or f-numbers.
+
+    The manual documents the field as an 'aperture stop value' without saying
+    which. In APEX terms real lenses top out around 8-9 (f/16-f/22); as plain
+    f-numbers the same lenses report 16-22. Nothing sits in both ranges, so the
+    magnitude settles it.
+    """
+    return maximum <= 11.0
+
+
 def describe_shutter_angle(hundredths: int) -> str:
     """Render an API shutter angle as a human string: 18000 -> '180deg'."""
     degrees = hundredths / 100.0
