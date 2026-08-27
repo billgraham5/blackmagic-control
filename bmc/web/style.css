@@ -166,9 +166,9 @@ input[type="range"] {
   height: 34px;
 }
 
-/* Aperture is typed as a number, with the f/ prefix rendered as part of the
-   field so the value reads the way it does on a lens barrel. */
-.fstop-field {
+/* A value that can be dragged can also be typed. The unit is rendered as part
+   of the field so the number reads the way it is spoken: f/4, 5600K, 80%. */
+.numfield {
   display: inline-flex;
   align-items: center;
   gap: 0.15rem;
@@ -178,10 +178,10 @@ input[type="range"] {
   padding: 0 0.6rem;
   min-height: 40px;
 }
-.fstop-field:focus-within { border-color: var(--accent); }
-.fstop-prefix { color: var(--muted); font-weight: 600; }
+.numfield:focus-within { border-color: var(--accent); }
+.affix { color: var(--muted); font-weight: 600; }
 
-.fstop-field input {
+.numfield input {
   font: inherit;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -189,11 +189,12 @@ input[type="range"] {
   background: none;
   border: 0;
   outline: none;
-  width: 3.6rem;
+  width: 4.2rem;
   padding: 0.5rem 0;
+  text-align: right;
 }
-/* Keep the spinners: they step the aperture, which is genuinely useful. */
-.fstop-field input::-webkit-inner-spin-button { opacity: 1; }
+/* Keep the spinners: stepping by the field's own increment is useful. */
+.numfield input::-webkit-inner-spin-button { opacity: 1; }
 
 .hint {
   color: var(--muted);

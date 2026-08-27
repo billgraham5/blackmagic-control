@@ -92,9 +92,14 @@ The Control view shows only what the connected camera implements:
 
 | Area | Controls |
 | --- | --- |
-| Exposure | ISO with ladder stepping, shutter (speed or angle), white balance with presets and auto, tint, auto exposure |
-| Lens | Iris as a typed f-number bounded by the lens's range, focus, zoom, one-shot autofocus — active lenses only |
+| Exposure | ISO with ladder stepping, shutter (speed or angle), white balance, tint, auto exposure |
+| Lens | Iris as an f-number bounded by the lens's range, focus, zoom, one-shot autofocus — active lenses only |
 | Colour | Saturation, plus a passthrough for the remaining DaVinci-style primaries |
+
+Continuous values — white balance, tint, focus, zoom, saturation and iris — accept a
+typed value as well as the slider, in the unit they are read in: kelvin, percent, or an
+f-number. The camera snaps to its own legal steps, and the field shows the value it
+actually took.
 | Presets | Recall and save whole camera states |
 | Record | Toggle with live state and optional clip naming |
 | Monitoring | Zebra, false colour, focus assist, frame guides, clean feed, LUT, colour bars and tally read-back, selectable per output |

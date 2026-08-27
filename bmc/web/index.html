@@ -55,7 +55,7 @@
 
       <div class="row" id="row-wb">
         <span class="label">White bal.</span>
-        <span class="value" id="wb-value">&mdash;</span>
+        <span class="numfield"><input type="number" id="wb-input" min="2500" max="10000" step="10" inputmode="decimal" autocomplete="off" aria-label="White balance in kelvin"><span class="affix">K</span></span>
         <input type="range" id="wb-slider" min="2500" max="10000" step="50" data-control="wb">
       </div>
       <div class="row" id="row-wb-presets">
@@ -66,7 +66,7 @@
 
       <div class="row" id="row-tint">
         <span class="label">Tint</span>
-        <span class="value" id="tint-value">&mdash;</span>
+        <span class="numfield"><input type="number" id="tint-input" min="-50" max="50" step="1" inputmode="decimal" autocomplete="off" aria-label="White balance tint"></span>
         <input type="range" id="tint-slider" min="-50" max="50" step="1" data-control="tint">
       </div>
 
@@ -81,8 +81,8 @@
 
       <div class="row" id="row-iris">
         <span class="label">Iris</span>
-        <span class="fstop-field">
-          <span class="fstop-prefix">f/</span>
+        <span class="numfield">
+          <span class="affix">f/</span>
           <input type="number" id="iris-fstop" step="0.1" min="1" max="22"
                  inputmode="decimal" autocomplete="off" aria-label="Aperture, f-number">
         </span>
@@ -92,15 +92,16 @@
 
       <div class="row" id="row-focus">
         <span class="label">Focus</span>
-        <span class="value" id="focus-value">&mdash;</span>
+        <span class="numfield"><input type="number" id="focus-input" min="0" max="100" step="0.5" inputmode="decimal" autocomplete="off" aria-label="Focus position, percent"><span class="affix">%</span></span>
         <input type="range" id="focus-slider" min="0" max="1" step="0.005" data-control="focus">
         <button data-deck="/deck/focus/auto">AF</button>
       </div>
 
       <div class="row" id="row-zoom">
         <span class="label">Zoom</span>
-        <span class="value" id="zoom-value">&mdash;</span>
+        <span class="numfield"><input type="number" id="zoom-input" min="0" max="100" step="1" inputmode="decimal" autocomplete="off" aria-label="Zoom position, percent"><span class="affix">%</span></span>
         <input type="range" id="zoom-slider" min="0" max="1" step="0.01" data-control="zoom">
+        <span class="hint" id="zoom-focal"></span>
       </div>
     </section>
 
@@ -108,7 +109,7 @@
       <h2>Colour</h2>
       <div class="row" id="row-saturation">
         <span class="label">Saturation</span>
-        <span class="value" id="saturation-value">&mdash;</span>
+        <span class="numfield"><input type="number" id="saturation-input" min="0" max="2" step="0.01" inputmode="decimal" autocomplete="off" aria-label="Saturation"></span>
         <input type="range" id="saturation-slider" min="0" max="2" step="0.01" data-control="saturation">
       </div>
     </section>

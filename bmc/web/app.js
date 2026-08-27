@@ -23,13 +23,47 @@ const OVERLAY_NAMES = {
   colorBars: "Colour bars",
 };
 
-const SLIDERS = {
-  wb: { label: "wb-value", format: (v) => `${Math.round(v)}K` },
-  tint: { label: "tint-value", format: (v) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`) },
-  focus: { label: "focus-value", format: (v) => `${Math.round(v * 100)}%` },
-  zoom: { label: "zoom-value", format: (v) => `${Math.round(v * 100)}%` },
-  saturation: { label: "saturation-value", format: (v) => Number(v).toFixed(2) },
+/* Every continuous value can be dragged or typed, and the two stay in step.
+ *
+ * `toField` converts what the API reports into what the field shows; `toApi`
+ * converts back. They differ where the camera works in a unit nobody says out
+ * loud -- focus and zoom are normalised 0-1 on the wire and percentages on
+ * screen. `round` is the precision the field is worth showing.
+ */
+const CONTROLS = {
+  wb: { round: 0 },
+  tint: { round: 0 },
+  focus: { round: 1, toField: (v) => v * 100, toApi: (v) => v / 100 },
+  zoom: { round: 0, toField: (v) => v * 100, toApi: (v) => v / 100 },
+  saturation: { round: 2 },
 };
+
+const identity = (v) => v;
+
+function toField(control, apiValue) {
+  const spec = CONTROLS[control];
+  const converted = (spec.toField || identity)(Number(apiValue));
+  return Number(converted.toFixed(spec.round));
+}
+
+function toApi(control, fieldValue) {
+  return (CONTROLS[control].toApi || identity)(Number(fieldValue));
+}
+
+/** Is this control currently being dragged or typed into? */
+function busy(control) {
+  const field = el(`${control}-input`);
+  return state.dragging.has(control) || (Boolean(field) && document.activeElement === field);
+}
+
+/** Show a value on both the field and the slider, without fighting the user. */
+function showControl(control, apiValue) {
+  if (apiValue === null || apiValue === undefined || Number.isNaN(Number(apiValue))) return;
+  const field = el(`${control}-input`);
+  const slider = el(`${control}-slider`);
+  if (field && document.activeElement !== field) field.value = toField(control, apiValue);
+  if (slider && !state.dragging.has(control)) slider.value = apiValue;
+}
 
 const el = (id) => document.getElementById(id);
 const state = {
@@ -160,19 +194,12 @@ function renderExposure() {
   show("row-shutter", supports("/video/shutter"));
 
   const wb = value("/video/whiteBalance", "whiteBalance");
-  if (wb !== null && !state.dragging.has("wb")) {
-    el("wb-value").textContent = `${wb}K`;
-    el("wb-slider").value = wb;
-  }
+  if (!busy("wb")) showControl("wb", wb);
   markActive("[data-wb]", "wb", wb);
   show("row-wb-presets", supports("/video/whiteBalance"));
   show("row-wb", supports("/video/whiteBalance"));
 
-  const tint = value("/video/whiteBalanceTint", "whiteBalanceTint");
-  if (tint !== null && !state.dragging.has("tint")) {
-    el("tint-value").textContent = tint > 0 ? `+${tint}` : `${tint}`;
-    el("tint-slider").value = tint;
-  }
+  if (!busy("tint")) showControl("tint", value("/video/whiteBalanceTint", "whiteBalanceTint"));
   show("row-tint", supports("/video/whiteBalanceTint"));
 
   const ae = state.values["/video/autoExposure"] || {};
@@ -218,32 +245,22 @@ function renderLens() {
   renderIris();
   show("row-iris", supports("/lens/iris"));
 
-  const focus = value("/lens/focus", "focus");
-  if (focus !== null && !state.dragging.has("focus")) {
-    el("focus-value").textContent = `${Math.round(focus * 100)}%`;
-    el("focus-slider").value = focus;
-  }
+  if (!busy("focus")) showControl("focus", value("/lens/focus", "focus"));
   show("row-focus", supports("/lens/focus"));
 
   const zoom = state.values["/lens/zoom"] || {};
-  if (!state.dragging.has("zoom")) {
-    if (zoom.focalLength) {
-      el("zoom-value").textContent = `${zoom.focalLength}mm`;
-    } else if (zoom.normalised !== undefined) {
-      el("zoom-value").textContent = `${Math.round(zoom.normalised * 100)}%`;
-    }
-    if (zoom.normalised !== undefined) el("zoom-slider").value = zoom.normalised;
-  }
+  if (!busy("zoom")) showControl("zoom", zoom.normalised);
+  // Focal length is what the lens is actually at; the field stays in percent
+  // because not every lens reports millimetres.
+  el("zoom-focal").textContent = zoom.focalLength ? `${zoom.focalLength}mm` : "";
   show("row-zoom", supports("/lens/zoom"));
 
   showCardIfAnyRowVisible("card-lens");
 }
 
 function renderColor() {
-  const saturation = value("/colorCorrection/color", "saturation");
-  if (saturation !== null && !state.dragging.has("saturation")) {
-    el("saturation-value").textContent = Number(saturation).toFixed(2);
-    el("saturation-slider").value = saturation;
+  if (!busy("saturation")) {
+    showControl("saturation", value("/colorCorrection/color", "saturation"));
   }
   show("card-color", supports("/colorCorrection/color"));
 }
@@ -496,14 +513,14 @@ function wireControls() {
 
   document.querySelectorAll("input[type=range][data-control]").forEach((slider) => {
     const control = slider.dataset.control;
-    const spec = SLIDERS[control];
     const push = throttle((v) => send(`/api/set/${control}?v=${v}`));
 
-    /* Show the value under your finger straight away. Waiting for the camera
-     * to answer means a poll interval of not knowing what you are setting --
-     * and on firmware that pushes nothing, that is every value on the page. */
+    /* Keep the number field in step with the slider as it moves. Waiting for
+     * the camera to answer means a poll interval of not knowing what is being
+     * set, and on firmware that pushes nothing that is every value here. */
     const showLive = () => {
-      if (spec) el(spec.label).textContent = spec.format(Number(slider.value));
+      const field = el(`${control}-input`);
+      if (field) field.value = toField(control, slider.value);
     };
 
     slider.addEventListener("input", () => {
@@ -512,27 +529,57 @@ function wireControls() {
       push(slider.value);
     });
 
-    /* Stay "dragging" until the final write lands, so a poll or push that is
-     * already in flight cannot snap the label back to the old value. */
+    /* Stay "dragging" until the final write lands, so a poll or push already in
+     * flight cannot snap the value back. */
     const commit = async () => {
       if (!state.dragging.has(control)) return;
       showLive();
       await send(`/api/set/${control}?v=${slider.value}`);
       state.dragging.delete(control);
-      /* The camera snaps to its own legal values, so a fine adjustment often
-       * lands somewhere other than where you left the slider. Re-read rather
-       * than assume, otherwise the page shows a value the camera never took. */
       await resync();
       renderAll();
     };
 
     slider.addEventListener("change", commit);
-    slider.addEventListener("blur", commit);
-    /* On the window, not the slider: releasing outside the control -- easy to
-     * do when nudging a small amount -- would otherwise leave the control
-     * marked as dragging forever, freezing its display until a page reload. */
+    /* On the window, not the slider: releasing outside the control -- easy when
+     * nudging a small amount -- would otherwise leave it marked as dragging and
+     * frozen until a page reload. */
     window.addEventListener("pointerup", commit);
     window.addEventListener("pointercancel", commit);
+  });
+
+  Object.keys(CONTROLS).forEach((control) => {
+    const field = el(`${control}-input`);
+    if (!field) return;
+
+    /* Typed entry is the exact-value path: the slider cannot reach 5637K. The
+     * camera still snaps to its own steps, so read back rather than trusting
+     * what was typed. */
+    const commit = async () => {
+      if (field.value === "") {
+        await resync();
+        renderAll();
+        return;
+      }
+      const wanted = toApi(control, field.value);
+      if (!Number.isFinite(wanted)) {
+        await resync();
+        renderAll();
+        return;
+      }
+      await send(`/api/set/${control}?v=${wanted}`);
+      await resync();
+      renderAll();
+    };
+
+    field.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        field.blur(); // commits through the blur handler
+      }
+    });
+    field.addEventListener("change", commit);
+    field.addEventListener("blur", commit);
   });
 }
 
