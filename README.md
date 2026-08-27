@@ -1,9 +1,10 @@
 # blackmagic-control
 
-Control a **Blackmagic Micro Studio Camera 4K G2** over the Camera Control REST API —
-from an Elgato Stream Deck and from a local web page.
+Control a Blackmagic camera over the Camera Control REST API — from a web page and from
+an Elgato Stream Deck. Developed against a **Micro Studio Camera 4K G2**, and applicable
+to any Blackmagic body that exposes the same API.
 
-A small Python service owns the camera connection and exposes two surfaces:
+A small Python service holds the connection to the camera and serves two interfaces:
 
 ```
 Stream Deck ──HTTP──┐
@@ -11,246 +12,156 @@ Stream Deck ──HTTP──┐
 Phone / browser ────┘
 ```
 
-Both go through the same action layer, so a Stream Deck key and a slider that do the
-same thing really do the same thing. The service holds a live websocket to the camera,
-which is what makes toggles, relative stepping and lit button state possible — the REST
-API only offers absolute setters.
+Both are built on one action layer, so a button and a slider that do the same thing
+behave identically. The service keeps a live websocket subscription to the camera, which
+is what makes toggles, relative stepping and lit button state possible: the REST API
+itself offers only absolute setters.
 
-## Running it
+## Requirements
+
+- Python 3.10 or newer
+- A camera on the network with **web media manager enabled**, under *network access* in
+  Blackmagic Camera Setup. The REST API is served by that service; with it disabled,
+  nothing responds.
+
+On a Micro Studio Camera 4K G2 there is no Ethernet jack, no PoE and no Wi-Fi. Network
+access comes from a USB-C to Ethernet adapter on the single USB-C port — the same port
+used for external recording and for focus/zoom demands. Using the camera for control and
+external recording at once requires a powered hub that provides both.
+
+## Install and run
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m bmc
 ```
 
-The default camera is `https://Micro-Studio-Camera-4K-G2.local`. To point at a
-different one, `--camera` takes a hostname, `host:port`, or the full URL that
-Blackmagic Camera Setup displays, pasted verbatim:
+Open **http://localhost:8080/** for the web page. Stream Deck buttons point at
+`http://localhost:8080/deck/...` — see [`docs/streamdeck.md`](docs/streamdeck.md).
+
+The service starts whether or not the camera is reachable and retries until it answers,
+so it can be launched at boot and the camera powered on afterwards.
+
+## Configuration
+
+`--camera` accepts a hostname, `host:port`, or the full URL shown in Blackmagic Camera
+Setup:
 
 ```sh
-.venv/bin/python -m bmc --camera https://Micro-Studio-Camera-4K-G2.local
+.venv/bin/python -m bmc --camera https://camera-name.local
 .venv/bin/python -m bmc --camera 192.168.1.42 --http
 ```
 
-Then open **http://localhost:8080/** for the web page, and point Stream Deck buttons at
-`http://localhost:8080/deck/...` — see [`docs/streamdeck.md`](docs/streamdeck.md).
+| Option | Purpose |
+| --- | --- |
+| `--camera` | Camera hostname, `host:port`, or URL |
+| `--https` / `--http` | Force a scheme; otherwise the URL's scheme or the default is used |
+| `--host`, `--port` | Where the service itself listens (default `0.0.0.0:8080`) |
+| `--poll-interval` | Seconds between reads of properties the camera will not push |
+| `--verbose` | Debug logging |
 
-A scheme in the URL wins over the default, and `--https` / `--http` wins over both.
-If the chosen scheme does not answer, the service tries the other one before backing
-off — HTTPS depends on a certificate having been generated in Blackmagic Camera Setup,
-and that is a setting someone can turn off later.
+The same settings can be supplied as `BMC_CAMERA`, `BMC_SCHEME`, `BMC_HOST`, `BMC_PORT`,
+`BMC_POLL_INTERVAL` and `BMC_VERIFY_TLS`.
 
-Other options: `--port`, `--poll-interval`, `--verbose`. The same settings can come
-from `BMC_CAMERA`, `BMC_SCHEME`, `BMC_PORT` and friends.
+If the chosen scheme does not answer, the service tries the other before backing off,
+since HTTPS depends on a certificate having been generated in Blackmagic Camera Setup.
+That certificate is self-signed and issued to the camera's mDNS name, so TLS verification
+is disabled by default; set `BMC_VERIFY_TLS=1` if the certificate has been installed
+locally.
 
-The camera's certificate is self-signed and issued to its mDNS name, so TLS
-verification is off by default — there is no CA to check it against. Set
-`BMC_VERIFY_TLS=1` if you have installed the camera's certificate yourself.
+Requests to the camera never use `HTTP_PROXY` / `HTTPS_PROXY`. A `.local` name on the
+local network cannot be resolved by a proxy.
 
-The service starts whether or not the camera is reachable and keeps retrying, so it is
-safe to launch at boot and power the camera on afterwards.
+## Capabilities
 
-**Before anything works:** enable the web media manager under *network access* in
-Blackmagic Camera Setup. The REST API is served by that same service.
+The service discovers what the camera supports at startup rather than assuming a fixed
+list. It reads the OpenAPI documents the camera serves at `/control/documentation.html`,
+combines them with the properties named by `/event/list`, expands templated paths against
+the displays and audio channels the camera reports, and probes the result. A built-in
+list serves only as a floor for firmware that publishes no documentation.
 
-## After pulling an update
+The web page has three views:
 
-Restart the service and reload the page normally — no hard refresh needed. Page assets
-carry a build tag derived from their contents and are served `no-cache`, so a browser
-cannot keep running the JavaScript it cached before an upgrade. If you were bitten by
-this before the fix, one hard refresh clears the old copy for good.
+- **Control** — a curated layout of the settings used while shooting
+- **Status** — every value the camera exposes, grouped and filterable, marked `live`
+  where the camera pushes updates rather than the service polling
+- **Configure** — every setting the camera reports as writable, rendered from its own
+  schema: enums as menus, numbers bounded by their documented range, booleans as toggles
 
-## When a control is missing
+The Control view shows only what the connected camera implements:
 
-The service only shows what the camera answered for at startup. To see exactly what it
-found and why:
+| Area | Controls |
+| --- | --- |
+| Exposure | ISO with ladder stepping, shutter (speed or angle), white balance with presets and auto, tint, auto exposure |
+| Lens | Iris as a typed f-number bounded by the lens's range, focus, zoom, one-shot autofocus — active lenses only |
+| Colour | Saturation, plus a passthrough for the remaining DaVinci-style primaries |
+| Presets | Recall and save whole camera states |
+| Record | Toggle with live state and optional clip naming |
+| Monitoring | Zebra, false colour, focus assist, frame guides, clean feed, LUT, colour bars and tally read-back, selectable per output |
+| Media | Remaining record time on the active disk |
+
+Every `/deck/*` endpoint returns a short line of plain text suitable for a button title,
+so a generic HTTP plugin or Bitfocus Companion's HTTP module can drive it without a
+dedicated Stream Deck plugin.
+
+## Troubleshooting
+
+The service reports what it found at startup and why:
 
 ```sh
 curl http://localhost:8080/api/diagnostics
 ```
 
-Every probed endpoint appears with its status. `404` and `501` mean the camera genuinely
-does not have it. Anything else — or `NO RESPONSE` — means the probe failed and you lost
-a control for the wrong reason; restart and it should recover.
+Each probed endpoint is listed with its status. `404` and `501` mean the camera does not
+implement it. Any other status, or `NO RESPONSE`, means the probe itself failed and the
+control was dropped for the wrong reason; restarting usually recovers it.
 
-Note that the camera is a small embedded HTTP server. Probing is deliberately sequential
-with retries on dropped connections and 5xx, because firing requests at it in parallel
-makes it drop most of them, and a dropped probe is indistinguishable from an unsupported
-endpoint. Requests never go through `HTTP_PROXY`/`HTTPS_PROXY` either — a `.local` mDNS
-name on your own LAN cannot be resolved by a proxy.
+Probing is sequential, with retries on dropped connections and 5xx responses. The camera
+runs a small embedded HTTP server that drops most of a large concurrent burst, and a
+dropped probe is indistinguishable from an unsupported endpoint.
 
-## Trying it without a camera
+Page assets are served `no-cache` and their URLs carry a build tag derived from their
+contents, so a browser will not run JavaScript cached before an upgrade.
 
-A mock Micro Studio 4K G2 is included, modelled on the real thing down to the quirks —
-it 404s the endpoints this body lacks, snaps ISO to the native ladder, and only pushes
-transport state over its websocket so the service has to fall back to polling:
+`scripts/probe-camera.sh` performs the same discovery standalone, writing the camera's
+own OpenAPI documents and a per-endpoint report to `camera-probe/`.
+
+## Development
+
+A mock camera is included, modelled on real hardware: it returns `404` and `501` for
+endpoints the body lacks, `204` for endpoints with nothing to report, snaps ISO to the
+native ladder, serves its own OpenAPI documentation, and pushes only a subset of
+properties over its websocket so the polling fallback is exercised.
 
 ```sh
 .venv/bin/python -m uvicorn tools.mock_camera:app --port 9000 &
 .venv/bin/python -m bmc --camera http://localhost:9000
 ```
 
-## What it does
-
-Three pages:
-
-- **Control** — a curated layout for the things you reach for while shooting
-- **Status** — every value the camera exposes, grouped, filterable, marked `live` where
-  the camera pushes rather than the service polls
-- **Configure** — every setting the camera says can be written, rendered from its own
-  schema: enums as menus, numbers bounded by their documented range, booleans as toggles
-
-The endpoint list is not hardcoded. At startup the service reads the OpenAPI documents
-the camera serves at `/control/documentation.html`, unions them with the properties named
-by `/event/list`, expands templated paths against the displays and audio channels the
-camera reports, and probes the result. A built-in list is only a floor for firmware that
-serves no documentation.
-
-The Control page shows only what your camera actually implements:
-
-- **Exposure** — ISO with ladder stepping, shutter (speed or angle), white balance with
-  presets and auto, tint, auto exposure
-- **Lens** — iris as a typed f-number bounded by the lens's own range, focus, zoom,
-  one-shot autofocus (active MFT lenses only)
-- **Colour** — saturation, with a passthrough for the rest of the DaVinci-style primaries
-- **Presets** — recall and save whole camera states
-- **Record** — toggle with live state, optional clip naming
-- **Monitoring** — zebra, false colour, focus assist, frame guides, clean feed, LUT and
-  colour bars, plus tally read-back, on firmware that has them. Overlays are per output;
-  pick which one they act on and the choice is remembered
-- **Media** — remaining record time on the active disk
-
-## Tests
-
 ```sh
 .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
 ```
 
-97 tests run the real service against the mock camera over real HTTP and websockets,
-covering capability discovery, ladder stepping and clamping, read-back after write,
-error surfacing, the polling fallback, and live websocket updates. Three of them
-generate a self-signed certificate and repeat the connection over HTTPS and `wss://`,
-which is how the camera is actually configured.
+97 tests run the service against the mock over real HTTP and websockets, covering
+capability discovery, ladder stepping and clamping, read-back after write, error
+surfacing, the polling fallback and live websocket updates. Three generate a self-signed
+certificate and repeat the connection over HTTPS and `wss://`.
 
-## Layout
-
-| Path | What it is |
+| Path | Contents |
 | --- | --- |
 | `bmc/camera.py` | REST client, capability probe, websocket subscriber, state cache |
-| `bmc/discovery.py` | Reads the camera's own OpenAPI documents for paths and schemas |
+| `bmc/discovery.py` | Parses the camera's OpenAPI documents for paths and schemas |
 | `bmc/actions.py` | Semantic verbs (toggle, step, recall) built on absolute setters |
-| `bmc/ladders.py` | Discrete value ladders and stepping — pure, heavily tested |
-| `bmc/app.py` | FastAPI service: `/deck/*` plain text, `/api/*` JSON + websocket |
-| `bmc/web/` | The web page — vanilla JS, no build step |
-| `tools/mock_camera.py` | Fake camera for development and tests |
-| `scripts/probe-camera.sh` | Discover exactly what your camera supports |
-| `docs/rest-api-notes.md` | Capability reference for this camera body |
-| `docs/streamdeck.md` | Stream Deck / Companion setup and endpoint list |
-
----
-
-# Background
-
-The assessment that led to the design above.
-
-## The hardware constraint (read this first)
-
-The Micro Studio Camera 4K G2 has:
-
-- 1 × USB-C 3.1 Gen 1 port — used for external Blackmagic RAW recording, focus/zoom
-  demand, software updates, **and** network connectivity
-- **No** built-in Ethernet jack, no PoE, no Wi-Fi
-
-The REST API is reachable only once the camera is on a network, and on this body that
-means hanging a USB-C→Ethernet adapter off the single expansion port. If you also want
-to record to an external SSD you need a powered USB-C hub providing both, and that
-combination is worth bench-testing before you build anything on top of it.
-
-Control-only (no external recording) is the straightforward case: adapter in, done.
-
-## What the API gives you
-
-Base URL: `http://<camera-name>.local/control/api/v1/` (HTTPS available after generating
-a certificate in Blackmagic Camera Setup).
-
-Prerequisite: **enable the web media manager** under *network access* in Blackmagic
-Camera Setup. The REST API rides on that service; with it off, nothing responds.
-
-The published spec defines ~187 operations. Confirmed present on a Micro Studio 4K G2:
-
-- **Exposure** — `/video/iso`, `/video/gain`, `/video/shutter`, `/video/whiteBalance`,
-  `/video/whiteBalanceTint`, `/video/whiteBalance/doAuto`, `/video/autoExposure`
-- **Lens** (active MFT only) — `/lens/iris`, `/lens/zoom`, `/lens/focus`,
-  `/lens/focus/doAutoFocus`
-- **Colour** — `/colorCorrection/{lift,gamma,gain,offset,contrast,color,lumaContribution}`
-- **Transport** — `/transports/0/{record,play,stop,playback,timecode}`
-- **System** — `/system`, `/system/videoFormat`, `/system/codecFormat`, supported-format lists
-- **Presets** — list, recall, save, upload and delete whole camera states
-- **Audio** — per-channel input, level, phantom power, padding, low-cut filter
-- **Media** — `/media/workingset`, `/media/active`, format operations
-- **Events** — `/event/list` plus a websocket at
-  `ws://<camera>/control/api/v1/event/websocket` for push updates
-
-Full detail and the caveats are in [`docs/rest-api-notes.md`](docs/rest-api-notes.md).
-
-Endpoints in the manual that this body does **not** expose (they belong to URSA Cine /
-Studio Camera bodies): `/livestreams/*`, `/cloud/*`, `/slates/*`, `/immersive/*`,
-and much of `/monitoring/*` and `/camera/*`.
-
-Two caveats worth knowing before you build against this. The spec is generated from
-shared firmware code, so it advertises hardware this body does not have — ND filter and
-XLR audio endpoints both appear, and the G2 has neither. And endpoint coverage grows with
-firmware. Run `scripts/probe-camera.sh` against your own camera for ground truth.
-
-## Discovering your camera's exact API
-
-```sh
-./scripts/probe-camera.sh
-```
-
-This pulls `/control/documentation.html` (the camera's own OpenAPI documentation) and
-probes the endpoints that matter, so you know exactly what your firmware supports rather
-than what the PDF claims.
-
-## Prior art
-
-| Project | What it is | Verdict |
-| --- | --- | --- |
-| [DylanSpeiser/BM-Camera-Control-WebUI](https://github.com/DylanSpeiser/BM-Camera-Control-WebUI) | Vanilla JS web UI, ATEM Software Control styling, websocket sync, multi-camera | Best out-of-the-box web option. Explicitly lists Micro Studio 4K G2. AGPL-3.0. Author calls it a tech demo. |
-| [DylanSpeiser/BM-API-Tutorial](https://github.com/DylanSpeiser/BM-API-Tutorial) | Step-by-step tutorial building the above; `BMDevice.js` is reusable standalone | Best learning resource. |
-| [mgduk/bmd-cam-control](https://github.com/mgduk/bmd-cam-control) | Vite web app, built specifically against a Micro Studio G2 | Closest hardware match, but very early (2 commits). |
-| [vaihkonen/BlackmagicStreamDeck](https://github.com/vaihkonen/BlackmagicStreamDeck) | Stream Deck plugin: record toggle, ISO, shutter, WB, autofocus | Only Stream Deck plugin found. ~10 commits, no license, unproven. |
-| [GarthDB/blackmagic-camera-control](https://github.com/GarthDB/blackmagic-camera-control) | Node/TS SDK generated from the OpenAPI spec | Useful if building on Node. |
-| [Bitfocus Companion](https://github.com/bitfocus/companion-module-requests/issues/1383) | Stream Deck control surface | **No official BMD camera REST module.** Request open since Jan 2024, unimplemented. Companion's generic HTTP module works as a stopgap. |
-
-### The official sample you were looking for
-
-It is not on GitHub. Blackmagic hosts it behind a registration form on
-[Developer → Camera → SDK and Software](https://www.blackmagicdesign.com/developer/products/camera/sdk-and-software):
-
-- **Blackmagic Camera and HyperDeck REST Control** (`BlackmagicRESTControlDemo-1.0.zip`) —
-  a single-page REST control panel demonstrating status monitoring and transport control
-- **Blackmagic Cameras Code Samples 1.2** (Mac) — configuration utility, USB/Bluetooth/web
-  camera control, and a desktop camera control app. Predates the REST API (2023) and
-  mostly covers the older SDI/Bluetooth control protocols.
-
-Both require accepting the download form, so they can't be fetched programmatically.
-
-## Why a local service rather than direct calls
-
-The REST API offers absolute setters only. A control surface wants verbs — "one stop
-up", "toggle record", "is it recording?" — and every one of those needs current state.
-The service holds a live websocket subscription and does the read-modify-write, so the
-Stream Deck can stay stateless and the web page and the deck cannot drift apart.
-
-It also means no Stream Deck plugin had to be written: a generic HTTP button works on
-day one, and a native plugin is a later polish step rather than a prerequisite.
-
-The camera does send permissive CORS headers, so a browser page could call it directly.
-The proxy is about state and the Stream Deck, not about CORS.
+| `bmc/ladders.py` | Discrete value ladders, stepping and aperture conversion |
+| `bmc/app.py` | FastAPI service: `/deck/*` plain text, `/api/*` JSON and websocket |
+| `bmc/web/` | Web page — vanilla JavaScript, no build step |
+| `tools/mock_camera.py` | Mock camera for development and tests |
+| `scripts/probe-camera.sh` | Standalone capability probe |
+| `docs/rest-api-notes.md` | API reference and hardware caveats |
+| `docs/streamdeck.md` | Stream Deck and Companion setup, endpoint list |
 
 ## References
 
-- [REST API for Blackmagic Cameras (PDF, Aug 2025)](https://documents.blackmagicdesign.com/DeveloperManuals/RESTAPIforBlackmagicCameras.pdf)
-- [Micro Studio Camera 4K G2 tech specs](https://www.blackmagicdesign.com/products/blackmagicmicrostudiocamera/techspecs/W-CIN-31)
-- Your camera's own spec: `http://<camera>/control/documentation.html`
+- [REST API for Blackmagic Cameras](https://documents.blackmagicdesign.com/DeveloperManuals/RESTAPIforBlackmagicCameras.pdf) (PDF)
+- [Micro Studio Camera 4K G2 technical specifications](https://www.blackmagicdesign.com/products/blackmagicmicrostudiocamera/techspecs/W-CIN-31)
+- The connected camera's own specification, at `/control/documentation.html`
