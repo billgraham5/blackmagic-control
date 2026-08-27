@@ -1,18 +1,17 @@
 # What you can control on a Micro Studio Camera 4K G2
 
-Derived from the OpenAPI specification served by an actual Micro Studio Camera 4K G2 at
-`/control/documentation.html`, cross-checked against *REST API for Blackmagic Cameras*
-(August 2025) and the camera's published hardware specs.
+A reference for the Camera Control REST API as implemented on this body, covering the
+endpoints available, the shape of their values, and where the hardware differs from the
+published specification.
 
-> **Two caveats that matter throughout.**
+> **Two caveats apply throughout.**
 >
-> 1. **The spec is generated from shared firmware code, so it advertises hardware this
->    body does not have.** ND filter endpoints and XLR audio inputs both appear in the
->    G2's own documentation; the camera has neither. Presence in the spec is not proof of
->    a working feature.
-> 2. **Endpoint coverage grows with firmware.** The dump below came from a 2024-era
->    firmware. Newer releases add endpoints. Run `scripts/probe-camera.sh` for ground truth
->    on your unit.
+> 1. **The specification is generated from shared firmware code, so it advertises
+>    hardware this body does not have.** ND filter endpoints and XLR audio inputs both
+>    appear in the camera's own documentation; the camera has neither. Presence in the
+>    specification is not proof of a working feature.
+> 2. **Endpoint coverage varies by firmware.** Newer releases add endpoints. Run
+>    `scripts/probe-camera.sh` for ground truth on a given camera.
 
 ## Not in the REST API at all
 
@@ -22,9 +21,9 @@ subscribable properties a firmware 9.6.2 Micro Studio 4K G2 reports. It is reach
 the SDI/Bluetooth Camera Control Protocol, which is a different protocol documented in
 the *Blackmagic Camera Control Manual*, not this one.
 
-The same goes for anything else you cannot find below: the way to settle it for your body
-and firmware is `GET /control/documentation.html`, which serves the camera's own OpenAPI
-documents, and `GET /control/api/v1/event/list`.
+The same applies to anything else absent below. The authoritative sources for a given
+body and firmware are `GET /control/documentation.html`, which serves the camera's own
+OpenAPI documents, and `GET /control/api/v1/event/list`.
 
 ## Connecting
 
@@ -141,7 +140,7 @@ an f-number look correct until you open or close a stop.
 not an f-number. It cannot express f/2.8. Use `apertureStop` for real values.
 
 `GET /lens/iris/description` gives `controllable` and `apertureStop.min` / `.max`, which
-is the lens's actual range — worth reading before offering the user a value to set. The
+is the lens's actual range, and bounds any value worth offering. The
 manual does not state the units of those bounds, but magnitude settles it: a real lens
 tops out near APEX 8 (f/16) or states f/16–f/22 directly, and nothing sits in both ranges.
 
@@ -156,7 +155,7 @@ tops out near APEX 8 (f/16) or states f/16–f/22 directly, and nothing sits in 
 ```json
 {"focus": 0.42}
 ```
-Normalised 0.0–1.0. This is your focus-pull slider.
+Normalised 0.0–1.0.
 
 ### Autofocus — `PUT /lens/focus/doAutoFocus`
 No body. One-shot AF.
@@ -226,8 +225,9 @@ GET     /transports/0/timecode/source
   `speed`, `position`.
 - Timecode is BCD-encoded — decode before display.
 
-**Requires external media on the USB-C port**, which is the same port your Ethernet
-adapter occupies. See the hardware note in the README.
+**Requires external media on the USB-C port.** On this body that is the same port a
+USB-C to Ethernet adapter occupies, so control and external recording together need a
+powered hub providing both.
 
 ---
 
@@ -331,26 +331,25 @@ Pushes arrive as:
           "value": {"iso": 800}}}
 ```
 
-**Version caveat, and it matters for button feedback.** The firmware dump examined here
-only declares websocket subscriptions for `/media/*`, `/system/*`, `/transports/*` and
-`/timelines/0`. The current published manual lists a far wider set including `/video/iso`,
+**Subscription coverage varies by firmware, which affects button feedback.** Firmware
+from 2024 declares subscriptions only for `/media/*`, `/system/*`, `/transports/*` and
+`/timelines/0`. Firmware 9.6 declares over a hundred properties, including `/video/iso`,
 `/video/shutter`, `/video/whiteBalance`, `/lens/iris`, `/lens/focus`, `/colorCorrection/*`
 and `/presets/active`.
 
-So on older firmware you get push updates for record state but must **poll** for exposure
-values. `GET /event/list` on your camera returns the authoritative list — check it before
-designing button feedback, and update firmware if the wider set matters to you.
+On the narrower set, record state arrives as a push while exposure values must be
+**polled**. `GET /event/list` returns the authoritative list for the connected camera and
+is worth checking before designing button feedback.
 
-Subscriptions also catch changes made on the camera body or from another client, which is
-what keeps a Stream Deck honest.
+Subscriptions also report changes made on the camera body or by another client, which is
+what keeps an external control surface in step.
 
 ---
 
 ## Monitoring and camera body — present on current firmware
 
-The 2024-era spec dump this document was first built from had none of these, and an
-earlier revision wrongly recorded them as absent from this body. Confirmed working on a
-Micro Studio 4K G2 on current firmware:
+Absent from 2024-era firmware and present on 9.6. Confirmed working on a Micro Studio
+Camera 4K G2:
 
 ```
 GET|PUT  /camera/colorBars
@@ -372,7 +371,7 @@ Overlay bodies carry more than the on/off flag — zebra has a `level`, focus as
 `mode` and `color`, frame guide a `ratio` — so read before writing and merge, or you will
 silently reset them.
 
-Also confirmed on current firmware, and absent from the older dump:
+Also present on 9.6 and absent from 2024-era firmware:
 `/video/supportedISOs` · `/video/supportedGains` · `/video/supportedShutters` ·
 `/transports/0/play` · `/transports/0/stop` · `/system/format`
 

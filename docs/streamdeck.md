@@ -76,17 +76,17 @@ Active MFT lenses only.
 
 ### Monitoring overlays
 
-Available on current firmware. Overlays are per output, and a Micro Studio 4K G2 has
-three: `MainSDI`, `HDMI` and `FrontUSBC`. Without `?display=`, the endpoint acts on the
-first output the camera lists — `MainSDI` — which is very likely not the one you are
-looking at. Name the output explicitly:
+Available on current firmware. Overlays apply per output, and a Micro Studio Camera 4K G2
+has three: `MainSDI`, `HDMI` and `FrontUSBC`. Without `?display=`, the endpoint acts on
+the first output the camera lists, which is not necessarily the one being monitored. Name
+the output explicitly:
 
 ```
 /deck/monitor/zebra/toggle?display=HDMI
 /deck/monitor/cleanFeed/on?display=FrontUSBC
 ```
 
-`GET /api/state` lists the outputs your camera reports under `displays`.
+`GET /api/state` lists the outputs the connected camera reports, under `displays`.
 
 | URL | Notes |
 | --- | --- |
@@ -138,11 +138,11 @@ for you if you paste the name with a space.
 
 ## Polling for button state
 
-If your plugin supports a periodic status request, point it at `/deck/status` or
-`/deck/media` on a few-second interval. The service already holds a live websocket to
-the camera, so these reads are answered from cache and cost the camera nothing.
+A plugin that supports a periodic status request can point it at `/deck/status` or
+`/deck/media` on a few-second interval. The service holds a live websocket to the camera,
+so these reads are answered from cache and cost the camera nothing.
 
-Note the firmware caveat from [`rest-api-notes.md`](rest-api-notes.md): on older
-firmware the camera only pushes transport state, so record status is live while
-exposure values are refreshed by the service's poll loop (default every second,
-`--poll-interval` to change).
+Subscription coverage varies by firmware, as described in
+[`rest-api-notes.md`](rest-api-notes.md). Where the camera pushes only transport state,
+record status is live while exposure values are refreshed by the service's poll loop
+(default every second, `--poll-interval` to change).
