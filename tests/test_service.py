@@ -403,3 +403,20 @@ async def test_anything_discovered_can_be_written_through_the_passthrough(servic
     assert response.status_code == 200
     state = (await service.get("/api/state")).json()["state"]
     assert state["/camera/id"] == {"id": "studio-left-2"}
+
+
+async def test_an_overlay_the_camera_ignores_is_reported_not_silently_dropped(service):
+    """A camera can answer 204 and change nothing.
+
+    An overlay may not apply to the output it was addressed to. Left unchecked
+    that reads as a button that does nothing at all, with no clue why.
+    """
+    response = await deck(service, "monitor/cleanFeed/on?display=FrontUSBC")
+    assert response.status_code == 400
+    assert "left cleanFeed off" in response.text
+    assert "FrontUSBC" in response.text
+
+
+async def test_an_overlay_that_does_apply_still_works(service, camera_state):
+    assert (await deck(service, "monitor/cleanFeed/on?display=MainSDI")).text == "cleanFeed on"
+    assert camera_state.state["/monitoring/MainSDI/cleanFeed"]["enabled"] is True

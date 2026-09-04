@@ -547,6 +547,10 @@ class Camera:
     def supports(self, *paths: str) -> bool:
         return all(path in self._supported for path in paths)
 
+    def remember(self, path: str, value: Any) -> None:
+        """Record a freshly read value, notifying listeners if it changed."""
+        self._update(path, value)
+
     def _update(self, path: str, value: Any) -> None:
         if self._state.get(path) == value:
             return

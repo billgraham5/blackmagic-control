@@ -162,7 +162,7 @@ properties over its websocket so the polling fallback is exercised.
 .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
 ```
 
-108 tests run the service against the mock over real HTTP and websockets, covering
+110 tests run the service against the mock over real HTTP and websockets, covering
 capability discovery, ladder stepping and clamping, read-back after write, error
 surfacing, the polling fallback and live websocket updates. Three generate a self-signed
 certificate and repeat the connection over HTTPS and `wss://`.

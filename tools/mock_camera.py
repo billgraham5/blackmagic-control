@@ -256,6 +256,25 @@ async def put_autofocus() -> Response:
     return Response(status_code=204)
 
 
+#: Some overlays do not apply to some outputs. The camera answers 204 and
+#: changes nothing, which is indistinguishable from a broken button unless the
+#: service checks.
+IGNORED_WRITES: set[str] = {"/monitoring/FrontUSBC/cleanFeed"}
+
+
+@router.put("/monitoring/{display}/cleanFeed")
+async def put_clean_feed(display: str, body: dict[str, Any]) -> Response:
+    key = f"/monitoring/{display}/cleanFeed"
+    if key not in camera.state:
+        return JSONResponse({"error": "display not found"}, status_code=404)
+    if key in IGNORED_WRITES:
+        return Response(status_code=204)  # accepted, ignored
+    merged = dict(camera.state[key])
+    merged.update(body)
+    camera.set(key, merged)
+    return Response(status_code=204)
+
+
 @router.put("/presets/active")
 async def put_preset(body: dict[str, Any]) -> Response:
     name = body.get("preset")

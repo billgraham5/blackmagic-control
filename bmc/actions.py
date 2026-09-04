@@ -10,6 +10,7 @@ Every action returns a short string suitable for a Stream Deck button title.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Sequence
 
 from .camera import Camera, CameraError
@@ -395,6 +396,21 @@ async def flag_set(camera: Camera, path: str, on: bool, key: str = "enabled") ->
     body[key] = on
     await camera.put(path, body)
     label = path.rsplit("/", 1)[-1]
+
+    # A camera can answer 204 and change nothing: an overlay may not apply to
+    # the output it was addressed to, or may conflict with another setting.
+    # Reporting that as an unlit button looks like a broken control, so say it.
+    if flag_state(camera, path, key) != on:
+        await asyncio.sleep(0.2)  # allow for a camera that reports a beat late
+        refreshed = await camera.get(path)
+        if refreshed is not None:
+            camera.remember(path, refreshed)
+        if flag_state(camera, path, key) != on:
+            raise CameraError(
+                f"the camera accepted the request but left {label} "
+                f"{'off' if on else 'on'} for {path.rsplit('/', 2)[-2]}. "
+                "The overlay may not apply to that output."
+            )
     return f"{label} {'on' if flag_state(camera, path, key) else 'off'}"
 
 
