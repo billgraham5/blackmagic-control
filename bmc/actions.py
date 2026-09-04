@@ -401,10 +401,16 @@ async def flag_set(camera: Camera, path: str, on: bool, key: str = "enabled") ->
     # the output it was addressed to, or may conflict with another setting.
     # Reporting that as an unlit button looks like a broken control, so say it.
     if flag_state(camera, path, key) != on:
-        await asyncio.sleep(0.2)  # allow for a camera that reports a beat late
-        refreshed = await camera.get(path)
-        if refreshed is not None:
-            camera.remember(path, refreshed)
+        # Give a camera that reports a beat late room to catch up before calling
+        # this a rejection. Only the failure path pays for it, and a false alarm
+        # on a write that did work would be worse than a slow one that did not.
+        for delay in (0.2, 0.4, 0.8):
+            await asyncio.sleep(delay)
+            refreshed = await camera.get(path)
+            if refreshed is not None:
+                camera.remember(path, refreshed)
+            if flag_state(camera, path, key) == on:
+                break
         if flag_state(camera, path, key) != on:
             raise CameraError(
                 f"the camera accepted the request but left {label} "

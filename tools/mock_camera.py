@@ -256,10 +256,35 @@ async def put_autofocus() -> Response:
     return Response(status_code=204)
 
 
+#: Writes this camera applies only after a delay, as slower firmware does. The
+#: service must not mistake a late report for a rejection.
+SLOW_WRITES: dict[str, float] = {"/monitoring/HDMI/zebra": 0.5}
+
+
 #: Some overlays do not apply to some outputs. The camera answers 204 and
 #: changes nothing, which is indistinguishable from a broken button unless the
 #: service checks.
 IGNORED_WRITES: set[str] = {"/monitoring/FrontUSBC/cleanFeed"}
+
+
+@router.put("/monitoring/{display}/zebra")
+async def put_zebra(display: str, body: dict[str, Any]) -> Response:
+    key = f"/monitoring/{display}/zebra"
+    if key not in camera.state:
+        return JSONResponse({"error": "display not found"}, status_code=404)
+    merged = dict(camera.state[key])
+    merged.update(body)
+    delay = SLOW_WRITES.get(key)
+    if delay is None:
+        camera.set(key, merged)
+        return Response(status_code=204)
+
+    async def apply_later() -> None:
+        await asyncio.sleep(delay)
+        camera.set(key, merged)
+
+    asyncio.create_task(apply_later())
+    return Response(status_code=204)
 
 
 @router.put("/monitoring/{display}/cleanFeed")

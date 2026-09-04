@@ -422,3 +422,15 @@ async def test_an_overlay_the_camera_ignores_is_reported_not_silently_dropped(se
 async def test_an_overlay_that_does_apply_still_works(service, camera_state):
     assert (await deck(service, "monitor/cleanFeed/on?display=MainSDI")).text == "cleanFeed on"
     assert camera_state.state["/monitoring/MainSDI/cleanFeed"]["enabled"] is True
+
+
+async def test_a_camera_that_reports_late_is_not_called_a_rejection(service, camera_state):
+    """The check must tolerate a slow camera, or it fails writes that did work.
+
+    This output applies the write half a second after answering 204, which is
+    well past the first read-back.
+    """
+    response = await deck(service, "monitor/zebra/on?display=HDMI")
+    assert response.status_code == 200, response.text
+    assert response.text == "zebra on"
+    assert camera_state.state["/monitoring/HDMI/zebra"]["enabled"] is True
