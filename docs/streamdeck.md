@@ -9,7 +9,7 @@ makes it usable from any generic HTTP button without writing a Stream Deck plugi
   official Blackmagic camera REST module, so this is the working route.
 
 Assuming the service runs on the machine your Stream Deck is attached to, the base
-URL is `http://localhost:8080`. From another machine, use the service host's IP.
+URL is `http://localhost:8081`. From another machine, use the service host's IP.
 
 ## Why the response text matters
 

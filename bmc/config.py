@@ -29,7 +29,7 @@ class Settings:
     )
     verify_tls: bool = field(default_factory=lambda: _env_bool("BMC_VERIFY_TLS", False))
     host: str = field(default_factory=lambda: os.environ.get("BMC_HOST", "0.0.0.0"))
-    port: int = field(default_factory=lambda: int(os.environ.get("BMC_PORT", "8080")))
+    port: int = field(default_factory=lambda: int(os.environ.get("BMC_PORT", "8081")))
 
     #: How often to re-read properties the camera will not push over its websocket.
     poll_interval: float = field(

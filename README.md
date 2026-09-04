@@ -36,8 +36,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m bmc
 ```
 
-Open **http://localhost:8080/** for the web page. Stream Deck buttons point at
-`http://localhost:8080/deck/...` — see [`docs/streamdeck.md`](docs/streamdeck.md).
+Open **http://localhost:8081/** for the web page. Stream Deck buttons point at
+`http://localhost:8081/deck/...` — see [`docs/streamdeck.md`](docs/streamdeck.md).
 
 The service starts whether or not the camera is reachable and retries until it answers,
 so it can be launched at boot and the camera powered on afterwards.
@@ -56,7 +56,7 @@ Setup:
 | --- | --- |
 | `--camera` | Camera hostname, `host:port`, or URL |
 | `--https` / `--http` | Force a scheme; otherwise the URL's scheme or the default is used |
-| `--host`, `--port` | Where the service itself listens (default `0.0.0.0:8080`) |
+| `--host`, `--port` | Where the service itself listens (default `0.0.0.0:8081`) |
 | `--poll-interval` | Seconds between reads of properties the camera will not push |
 | `--diagnose` | Check connectivity to the camera step by step and exit |
 | `--verbose` | Debug logging |
@@ -129,7 +129,7 @@ configuration will change it.
 Once connected, the service reports what it found at startup and why:
 
 ```sh
-curl http://localhost:8080/api/diagnostics
+curl http://localhost:8081/api/diagnostics
 ```
 
 Each probed endpoint is listed with its status. `404` and `501` mean the camera does not
