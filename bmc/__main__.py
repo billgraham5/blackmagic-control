@@ -48,6 +48,11 @@ def main() -> None:
         default=defaults.poll_interval,
         help="seconds between reads of properties the camera will not push",
     )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="check connectivity to the camera step by step and exit",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -69,6 +74,14 @@ def main() -> None:
         port=args.port,
         poll_interval=args.poll_interval,
     )
+
+    if args.diagnose:
+        import asyncio
+
+        from .diagnose import diagnose
+
+        print(asyncio.run(diagnose(settings)))
+        return
 
     print(f"camera   {settings.api_base}")
     print(f"web UI   http://localhost:{settings.port}/")

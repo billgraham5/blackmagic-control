@@ -225,9 +225,10 @@ class Camera:
         status, _ = await self._probe_one("/system", attempts=1)
         if status is None:
             raise CameraUnavailable(
-                f"No response from {self.settings.api_base}. Check that the camera is on "
-                "the network and that the web media manager is enabled in Blackmagic "
-                "Camera Setup under 'network access'."
+                f"No response from {self.settings.api_base}. Run "
+                f"`python -m bmc --camera {self.settings.camera_host} --diagnose` to see "
+                "which step fails: the name, the port, TLS, or the API itself while the "
+                "camera's web server is still answering."
             )
 
         # Ask the camera what it implements before assuming anything. The
@@ -254,9 +255,10 @@ class Camera:
 
         if not reachable:
             raise CameraUnavailable(
-                f"No response from {self.settings.api_base}. Check that the camera is on "
-                "the network and that the web media manager is enabled in Blackmagic "
-                "Camera Setup under 'network access'."
+                f"No response from {self.settings.api_base}. Run "
+                f"`python -m bmc --camera {self.settings.camera_host} --diagnose` to see "
+                "which step fails: the name, the port, TLS, or the API itself while the "
+                "camera's web server is still answering."
             )
 
         self._connected = True

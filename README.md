@@ -58,6 +58,7 @@ Setup:
 | `--https` / `--http` | Force a scheme; otherwise the URL's scheme or the default is used |
 | `--host`, `--port` | Where the service itself listens (default `0.0.0.0:8080`) |
 | `--poll-interval` | Seconds between reads of properties the camera will not push |
+| `--diagnose` | Check connectivity to the camera step by step and exit |
 | `--verbose` | Debug logging |
 
 The same settings can be supplied as `BMC_CAMERA`, `BMC_SCHEME`, `BMC_HOST`, `BMC_PORT`,
@@ -111,7 +112,21 @@ dedicated Stream Deck plugin.
 
 ## Troubleshooting
 
-The service reports what it found at startup and why:
+When the camera will not connect, check the chain step by step:
+
+```sh
+.venv/bin/python -m bmc --diagnose
+```
+
+This resolves the name, opens the port, completes the TLS handshake and requests the web
+media manager, the API documentation and the control API in turn, reporting where it
+stops. The faults it separates need different fixes: a `.local` name that will not
+resolve is an mDNS problem, a refused port means the camera or its ethernet adapter is
+off the network, and a web server that answers while `/control/api/v1/` returns 404 is a
+fault on the camera itself — both are served by the same process, so no local
+configuration will change it.
+
+Once connected, the service reports what it found at startup and why:
 
 ```sh
 curl http://localhost:8080/api/diagnostics
@@ -147,7 +162,7 @@ properties over its websocket so the polling fallback is exercised.
 .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest
 ```
 
-97 tests run the service against the mock over real HTTP and websockets, covering
+108 tests run the service against the mock over real HTTP and websockets, covering
 capability discovery, ladder stepping and clamping, read-back after write, error
 surfacing, the polling fallback and live websocket updates. Three generate a self-signed
 certificate and repeat the connection over HTTPS and `wss://`.
@@ -156,6 +171,7 @@ certificate and repeat the connection over HTTPS and `wss://`.
 | --- | --- |
 | `bmc/camera.py` | REST client, capability probe, websocket subscriber, state cache |
 | `bmc/discovery.py` | Parses the camera's OpenAPI documents for paths and schemas |
+| `bmc/diagnose.py` | Layered connectivity check behind `--diagnose` |
 | `bmc/actions.py` | Semantic verbs (toggle, step, recall) built on absolute setters |
 | `bmc/ladders.py` | Discrete value ladders, stepping and aperture conversion |
 | `bmc/app.py` | FastAPI service: `/deck/*` plain text, `/api/*` JSON and websocket |
