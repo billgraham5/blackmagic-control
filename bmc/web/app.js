@@ -334,6 +334,13 @@ function renderDisplays() {
 
 function renderMonitoring() {
   renderDisplays();
+  // Name the output on the overlays themselves. The default is whichever output
+  // the camera lists first, which is not necessarily the one being watched, and
+  // an overlay applied to the wrong output looks like a button that does nothing.
+  const heading = el("overlays-label");
+  if (heading) {
+    heading.textContent = state.display ? `Overlays — ${state.display}` : "Overlays";
+  }
   const buttons = overlayButtons();
   const container = el("monitor-toggles");
 

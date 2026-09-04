@@ -278,9 +278,11 @@ async def test_default_overlay_display_follows_the_cameras_own_order(service):
 
 
 async def test_each_display_is_addressable(service, camera_state):
+    """Zebra rather than clean feed: every output supports it, so a failure here
+    means the display was not addressed, not that the overlay does not apply."""
     for display in ("HDMI", "FrontUSBC", "MainSDI"):
-        assert (await deck(service, f"monitor/cleanFeed/on?display={display}")).text == "cleanFeed on"
-        assert camera_state.state[f"/monitoring/{display}/cleanFeed"]["enabled"] is True
+        assert (await deck(service, f"monitor/zebra/on?display={display}")).text == "zebra on"
+        assert camera_state.state[f"/monitoring/{display}/zebra"]["enabled"] is True
 
 
 # ------------------------------------------------------------------- caching
